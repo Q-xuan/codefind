@@ -1,0 +1,5 @@
+/dist/
+/codefind
+/codefind.exe
+*.test
+*.prof
