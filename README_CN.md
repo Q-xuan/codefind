@@ -15,6 +15,7 @@
 - 所有模式均通过 `rg --fixed-strings` 按字面量处理，不解释为正则表达式或 shell 代码。
 - 显式限制原始匹配数、投影锚点数和总耗时。
 - 用单行 JSON 返回仓库相对路径和行号。
+- Go 候选可以携带受限的 `go/ast` 语法证据（`definition`、`call`、`reference`），但不会冒充类型解析后的关系边。
 - 搜索目录必须位于 `--root` 内，解析 symlink 后仍禁止越界。
 - 不建立索引、不启动 daemon、不调用模型，也不写入被搜索的仓库。
 
@@ -88,7 +89,7 @@ codefind --root .\example-repo `
 每个合法请求都会向 stdout 输出一行 `codefind-result-v1` JSON：
 
 ```json
-{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.1.0","status":"candidates_found","query":{"terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"]}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
+{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.1.0","status":"candidates_found","query":{"terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"],"syntax":{"role":"definition","symbol":"LoadConfig","authority":"go_ast_syntax"}}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false,"syntax_files_parsed":1,"syntax_anchors":1,"syntax_parse_errors":0,"syntax_files_skipped":0},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
 ```
 
 ### 结果字段
@@ -97,9 +98,9 @@ codefind --root .\example-repo `
 - `engine` / `version`：输出工具和 CLI 版本。
 - `status`：机器可判定的结果状态。
 - `query`：清理、去重后实际使用的词、符号和搜索目录。
-- `anchors`：预算内的候选位置；`path` 始终相对 `root`。
+- `anchors`：预算内的候选位置；`path` 始终相对 `root`。可选 `syntax` 是 `go/ast` 提供的语法级证据，不是类型解析关系。
 - `unknowns`：当前结果不能回答的事项，绝不能解释为否定结论。
-- `metrics`：调用次数、耗时、原始匹配、投影锚点与截断状态。没有观察到锚点时，`first_anchor_ms` 为 `null`。
+- `metrics`：调用次数、耗时、原始匹配、投影锚点、截断状态和受限 Go 语法解析计数。没有观察到锚点时，`first_anchor_ms` 为 `null`。
 - `limits`：本次请求实际采用的预算。
 - `external_writes`：对目标仓库的写入次数，当前固定为 `0`。
 
@@ -136,6 +137,7 @@ codefind --root .\example-repo `
 - `--max-matches` 限制从 `rg` 读取的原始匹配；`--max-anchors` 限制投影后的响应数量。
 - 达到时间或原始匹配预算时返回 `budget_exceeded`。
 - 投影和去重可能缩小输出，但这本身不表示预算耗尽。
+- Go 语法增强与搜索共用本次请求 timeout，只解析 lexical shortlist，最多 64 个文件且单文件不超过 1 MiB；解析失败保持 lexical-only，并通过 metrics 计数。
 - `no_candidates` 只表示当前查询没有产生锚点，永远不能转换成“未实现”或“不存在”。
 
 ## 默认搜索范围
@@ -155,6 +157,7 @@ codefind --root .\example-repo `
 以下能力明确不属于 `codefind` v0.1.x：
 
 - Code Graph、调用图或语义边
+- 类型解析后的 receiver、interface dispatch、reflection 或运行时调用结论；`go_ast_syntax` 只描述源码语法
 - 持久化索引、增量索引或后台 daemon
 - embedding、RAG、向量数据库或模型推理
 - MCP server、插件系统或编辑器集成框架

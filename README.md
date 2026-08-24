@@ -15,6 +15,7 @@ Its job is to narrow the reading surface—not to decide whether a feature exist
 - All patterns use `rg --fixed-strings`; they are never interpreted as regular expressions or shell code.
 - Explicit limits for raw matches, projected anchors, and total elapsed time.
 - Repository-relative paths and line numbers in a single-line JSON response.
+- Go candidates may include bounded `go/ast` syntax evidence (`definition`, `call`, or `reference`) without claiming type-resolved edges.
 - Search paths must remain inside `--root`, including after symlink resolution.
 - No index, daemon, model call, or write to the searched repository.
 
@@ -88,7 +89,7 @@ Provide at least one `--term` or `--symbol`. Repeat either flag to send multiple
 Every valid request writes one line of `codefind-result-v1` JSON to stdout:
 
 ```json
-{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.1.0","status":"candidates_found","query":{"terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"]}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
+{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.1.0","status":"candidates_found","query":{"terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"],"syntax":{"role":"definition","symbol":"LoadConfig","authority":"go_ast_syntax"}}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false,"syntax_files_parsed":1,"syntax_anchors":1,"syntax_parse_errors":0,"syntax_files_skipped":0},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
 ```
 
 ### Result fields
@@ -97,9 +98,9 @@ Every valid request writes one line of `codefind-result-v1` JSON to stdout:
 - `engine` / `version`: producer identity and CLI version.
 - `status`: machine-readable result state.
 - `query`: normalized, de-duplicated terms, symbols, and search paths actually used.
-- `anchors`: bounded candidate locations. `path` is always relative to `root`.
+- `anchors`: bounded candidate locations. `path` is always relative to `root`. Optional `syntax` is syntax-only evidence from `go/ast`, never a type-resolved relation.
 - `unknowns`: questions the current result cannot answer; never treat them as negative conclusions.
-- `metrics`: calls, elapsed time, raw matches, projected anchors, and truncation state. `first_anchor_ms` is `null` when no anchor was observed.
+- `metrics`: calls, elapsed time, raw matches, projected anchors, truncation, and bounded Go syntax parsing counts. `first_anchor_ms` is `null` when no anchor was observed.
 - `limits`: effective budgets for this request.
 - `external_writes`: writes to the searched repository; currently always `0`.
 
@@ -136,6 +137,7 @@ Budgets are part of the result contract:
 - `--max-matches` limits raw matches read from `rg`; `--max-anchors` limits the projected response.
 - Reaching the time or raw-match limit returns `budget_exceeded`.
 - Projection and de-duplication may reduce the response without exhausting a budget.
+- Go syntax enrichment shares the request timeout and only parses lexical shortlist files, at most 64 files and 1 MiB per file. Parse failures remain lexical-only and increment metrics.
 - `no_candidates` only means the current query produced no anchors. It must never be converted into “not implemented” or “does not exist.”
 
 ## Default search scope
@@ -155,6 +157,7 @@ Budgets are part of the result contract:
 The following are deliberately outside `codefind` v0.1.x:
 
 - Code Graphs, call graphs, or semantic edges
+- Type-resolved receiver, interface-dispatch, reflection, or runtime-call claims; `go_ast_syntax` only describes source syntax
 - Persistent or incremental indexes and background daemons
 - Embeddings, RAG, vector databases, or model inference
 - MCP servers, plugin systems, or editor-integration frameworks

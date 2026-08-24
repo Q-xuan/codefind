@@ -56,24 +56,29 @@ type Query struct {
 }
 
 type Anchor struct {
-	Kind        string   `json:"kind"`
-	Path        string   `json:"path"`
-	Line        int      `json:"line"`
-	Text        string   `json:"text"`
-	Groups      []string `json:"groups"`
+	Kind        string          `json:"kind"`
+	Path        string          `json:"path"`
+	Line        int             `json:"line"`
+	Text        string          `json:"text"`
+	Groups      []string        `json:"groups"`
+	Syntax      *SyntaxEvidence `json:"syntax,omitempty"`
 	pathRank    int
 	specificity int
 	paired      bool
 }
 
 type Metrics struct {
-	AgentCalls      int    `json:"agent_calls"`
-	RGCalls         int    `json:"rg_calls"`
-	ElapsedMS       int64  `json:"elapsed_ms"`
-	FirstAnchorMS   *int64 `json:"first_anchor_ms"`
-	RawMatches      int    `json:"raw_matches"`
-	ProjectedAnchor int    `json:"projected_anchors"`
-	Truncated       bool   `json:"truncated"`
+	AgentCalls         int    `json:"agent_calls"`
+	RGCalls            int    `json:"rg_calls"`
+	ElapsedMS          int64  `json:"elapsed_ms"`
+	FirstAnchorMS      *int64 `json:"first_anchor_ms"`
+	RawMatches         int    `json:"raw_matches"`
+	ProjectedAnchor    int    `json:"projected_anchors"`
+	Truncated          bool   `json:"truncated"`
+	SyntaxFilesParsed  int    `json:"syntax_files_parsed"`
+	SyntaxAnchors      int    `json:"syntax_anchors"`
+	SyntaxParseErrors  int    `json:"syntax_parse_errors"`
+	SyntaxFilesSkipped int    `json:"syntax_files_skipped"`
 }
 
 type Limits struct {
@@ -187,7 +192,18 @@ func Find(ctx context.Context, request Request) (Result, error) {
 	}
 
 	result.Metrics.RawMatches = len(all)
-	result.Anchors = project(all, normalized.MaxAnchors)
+	anchors := collectAnchors(all)
+	shortlistLimit := min(max(normalized.MaxAnchors*4, normalized.MaxAnchors), maxSyntaxFiles)
+	shortlist := projectAnchors(anchors, shortlistLimit)
+	syntax := enrichSyntax(searchCtx, normalized.root, shortlist, normalized.Symbols)
+	result.Metrics.SyntaxFilesParsed = syntax.filesParsed
+	result.Metrics.SyntaxAnchors = syntax.anchors
+	result.Metrics.SyntaxParseErrors = syntax.parseErrors
+	result.Metrics.SyntaxFilesSkipped = syntax.filesSkipped
+	if syntax.budgetExceeded {
+		budgetExceeded = true
+	}
+	result.Anchors = projectAnchors(shortlist, normalized.MaxAnchors)
 	result.Metrics.ProjectedAnchor = len(result.Anchors)
 	result.Metrics.Truncated = budgetExceeded || len(all) > normalized.MaxAnchors
 	result.Metrics.ElapsedMS = time.Since(started).Milliseconds()
@@ -379,7 +395,7 @@ func parseMatch(line string, group string, paths []string, patterns []string) (r
 	}, true
 }
 
-func project(rows []rawMatch, maxAnchors int) []Anchor {
+func collectAnchors(rows []rawMatch) []Anchor {
 	byKey := make(map[string]*Anchor, len(rows))
 	for _, row := range rows {
 		key := fmt.Sprintf("%s:%d:%s", row.path, row.line, row.text)
@@ -408,6 +424,10 @@ func project(rows []rawMatch, maxAnchors int) []Anchor {
 		anchors = append(anchors, *anchor)
 	}
 	markEvidencePairs(anchors)
+	return anchors
+}
+
+func projectAnchors(anchors []Anchor, maxAnchors int) []Anchor {
 	sort.Slice(anchors, func(i, j int) bool {
 		left, right := anchors[i], anchors[j]
 		if groupPriority(left.Groups) != groupPriority(right.Groups) {
@@ -418,6 +438,9 @@ func project(rows []rawMatch, maxAnchors int) []Anchor {
 		}
 		if left.specificity != right.specificity {
 			return left.specificity > right.specificity
+		}
+		if syntaxPriority(left.Syntax) != syntaxPriority(right.Syntax) {
+			return syntaxPriority(left.Syntax) < syntaxPriority(right.Syntax)
 		}
 		if left.paired != right.paired {
 			return left.paired

@@ -8,6 +8,7 @@
 
 - 面向 AI Coding Agent 的有预算字面量代码发现 CLI。
 - `codefind-result-v1` JSON Contract，以及候选、零命中、预算超限和工具不可用状态。
+- 对 lexical shortlist 中的 Go 候选提供受限 `go/ast` 语法证据与解析预算指标，不声明类型解析后的语义边。
 - 搜索根目录与 symlink 越界检查。
 - Windows、Linux、macOS CI 验证。
 
