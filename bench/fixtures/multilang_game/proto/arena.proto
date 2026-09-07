@@ -1,0 +1,12 @@
+syntax = "proto3";
+package game.arena;
+
+// ClaimArenaReward RPC; reward key arena_reward; id 100126
+message ClaimArenaRewardRequest {
+  int64 player_id = 1;
+  int32 reward_id = 2; // 100126
+}
+message ClaimArenaRewardResponse {}
+service ArenaService {
+  rpc ClaimArenaReward(ClaimArenaRewardRequest) returns (ClaimArenaRewardResponse);
+}

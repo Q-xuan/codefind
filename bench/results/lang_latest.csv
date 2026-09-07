@@ -1,0 +1,109 @@
+method,query_id,polarity,run,wall_ms,exit_code,hit_count,raw_matches,agent_json,has_path_line,noise_hits,has_syntax,status,query_languages,rg_calls,budget_fields,kind_distribution
+codefind_invalid_lang,invalid_lang_foobar,neg,1,2,2,0,0,1,0,0,0,invalid_request,,,0,{}
+codefind_invalid_lang,invalid_lang_foobar,neg,2,1,2,0,0,1,0,0,0,invalid_request,,,0,{}
+codefind_invalid_lang,invalid_lang_foobar,neg,3,1,2,0,0,1,0,0,0,invalid_request,,,0,{}
+rg_single_naive,symbol_ClaimArenaReward,pos,1,5,0,27,,0,1,3,0,rg_match,,,0,{}
+rg_single_naive,symbol_ClaimArenaReward,pos,2,4,0,27,,0,1,3,0,rg_match,,,0,{}
+rg_single_naive,symbol_ClaimArenaReward,pos,3,4,0,27,,0,1,3,0,rg_match,,,0,{}
+rg_single_scoped,symbol_ClaimArenaReward,pos,1,4,0,24,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,symbol_ClaimArenaReward,pos,2,4,0,24,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,symbol_ClaimArenaReward,pos,3,4,0,24,,0,1,0,0,rg_match,,,0,{}
+codefind_default,symbol_ClaimArenaReward,pos,1,7,0,10,10,1,1,0,1,candidates_found,go,1,1,"{""source"": 1, ""consumer"": 1, ""protocol"": 4, ""config"": 2, ""docs"": 2}"
+codefind_default,symbol_ClaimArenaReward,pos,2,6,0,10,10,1,1,0,1,candidates_found,go,1,1,"{""source"": 1, ""consumer"": 1, ""protocol"": 4, ""config"": 2, ""docs"": 2}"
+codefind_default,symbol_ClaimArenaReward,pos,3,7,0,10,10,1,1,0,1,candidates_found,go,1,1,"{""source"": 1, ""consumer"": 1, ""protocol"": 4, ""config"": 2, ""docs"": 2}"
+codefind_lang_lua_ts,symbol_ClaimArenaReward,pos,1,6,0,12,12,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 4, ""protocol"": 4, ""config"": 2, ""docs"": 2}"
+codefind_lang_lua_ts,symbol_ClaimArenaReward,pos,2,6,0,12,12,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 4, ""protocol"": 4, ""config"": 2, ""docs"": 2}"
+codefind_lang_lua_ts,symbol_ClaimArenaReward,pos,3,7,0,12,12,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 4, ""protocol"": 4, ""config"": 2, ""docs"": 2}"
+codefind_lang_all,symbol_ClaimArenaReward,pos,1,6,0,24,24,1,1,0,1,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 15, ""consumer"": 1, ""protocol"": 4, ""config"": 2, ""docs"": 2}"
+codefind_lang_all,symbol_ClaimArenaReward,pos,2,6,0,24,24,1,1,0,1,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 15, ""consumer"": 1, ""protocol"": 4, ""config"": 2, ""docs"": 2}"
+codefind_lang_all,symbol_ClaimArenaReward,pos,3,6,0,24,24,1,1,0,1,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 15, ""consumer"": 1, ""protocol"": 4, ""config"": 2, ""docs"": 2}"
+rg_single_naive,term_arena_reward,pos,1,4,0,24,,0,1,3,0,rg_match,,,0,{}
+rg_single_naive,term_arena_reward,pos,2,5,0,24,,0,1,3,0,rg_match,,,0,{}
+rg_single_naive,term_arena_reward,pos,3,3,0,24,,0,1,3,0,rg_match,,,0,{}
+rg_single_scoped,term_arena_reward,pos,1,4,0,21,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,term_arena_reward,pos,2,4,0,21,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,term_arena_reward,pos,3,4,0,21,,0,1,0,0,rg_match,,,0,{}
+codefind_default,term_arena_reward,pos,1,6,0,6,6,1,1,0,0,candidates_found,go,1,1,"{""source"": 1, ""consumer"": 1, ""protocol"": 1, ""config"": 2, ""docs"": 1}"
+codefind_default,term_arena_reward,pos,2,6,0,6,6,1,1,0,0,candidates_found,go,1,1,"{""source"": 1, ""consumer"": 1, ""protocol"": 1, ""config"": 2, ""docs"": 1}"
+codefind_default,term_arena_reward,pos,3,6,0,6,6,1,1,0,0,candidates_found,go,1,1,"{""source"": 1, ""consumer"": 1, ""protocol"": 1, ""config"": 2, ""docs"": 1}"
+codefind_lang_lua_ts,term_arena_reward,pos,1,6,0,8,8,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 4, ""protocol"": 1, ""config"": 2, ""docs"": 1}"
+codefind_lang_lua_ts,term_arena_reward,pos,2,7,0,8,8,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 4, ""protocol"": 1, ""config"": 2, ""docs"": 1}"
+codefind_lang_lua_ts,term_arena_reward,pos,3,6,0,8,8,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 4, ""protocol"": 1, ""config"": 2, ""docs"": 1}"
+codefind_lang_all,term_arena_reward,pos,1,7,0,21,21,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 16, ""consumer"": 1, ""protocol"": 1, ""config"": 2, ""docs"": 1}"
+codefind_lang_all,term_arena_reward,pos,2,7,0,21,21,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 16, ""consumer"": 1, ""protocol"": 1, ""config"": 2, ""docs"": 1}"
+codefind_lang_all,term_arena_reward,pos,3,9,0,21,21,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 16, ""consumer"": 1, ""protocol"": 1, ""config"": 2, ""docs"": 1}"
+rg_single_naive,id_100126,pos,1,3,0,22,,0,1,2,0,rg_match,,,0,{}
+rg_single_naive,id_100126,pos,2,4,0,22,,0,1,2,0,rg_match,,,0,{}
+rg_single_naive,id_100126,pos,3,3,0,22,,0,1,2,0,rg_match,,,0,{}
+rg_single_scoped,id_100126,pos,1,4,0,20,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,id_100126,pos,2,4,0,20,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,id_100126,pos,3,4,0,20,,0,1,0,0,rg_match,,,0,{}
+codefind_default,id_100126,pos,1,7,0,7,7,1,1,0,0,candidates_found,go,1,1,"{""source"": 1, ""consumer"": 1, ""protocol"": 2, ""config"": 2, ""docs"": 1}"
+codefind_default,id_100126,pos,2,6,0,7,7,1,1,0,0,candidates_found,go,1,1,"{""source"": 1, ""consumer"": 1, ""protocol"": 2, ""config"": 2, ""docs"": 1}"
+codefind_default,id_100126,pos,3,6,0,7,7,1,1,0,0,candidates_found,go,1,1,"{""source"": 1, ""consumer"": 1, ""protocol"": 2, ""config"": 2, ""docs"": 1}"
+codefind_lang_lua_ts,id_100126,pos,1,7,0,9,9,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 4, ""protocol"": 2, ""config"": 2, ""docs"": 1}"
+codefind_lang_lua_ts,id_100126,pos,2,6,0,9,9,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 4, ""protocol"": 2, ""config"": 2, ""docs"": 1}"
+codefind_lang_lua_ts,id_100126,pos,3,6,0,9,9,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 4, ""protocol"": 2, ""config"": 2, ""docs"": 1}"
+codefind_lang_all,id_100126,pos,1,6,0,20,20,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 14, ""consumer"": 1, ""protocol"": 2, ""config"": 2, ""docs"": 1}"
+codefind_lang_all,id_100126,pos,2,6,0,20,20,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 14, ""consumer"": 1, ""protocol"": 2, ""config"": 2, ""docs"": 1}"
+codefind_lang_all,id_100126,pos,3,6,0,20,20,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 14, ""consumer"": 1, ""protocol"": 2, ""config"": 2, ""docs"": 1}"
+rg_single_naive,lua_only,pos,1,3,0,1,,0,1,0,0,rg_match,,,0,{}
+rg_single_naive,lua_only,pos,2,5,0,1,,0,1,0,0,rg_match,,,0,{}
+rg_single_naive,lua_only,pos,3,4,0,1,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,lua_only,pos,1,4,0,1,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,lua_only,pos,2,5,0,1,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,lua_only,pos,3,4,0,1,,0,1,0,0,rg_match,,,0,{}
+codefind_default,lua_only,pos,1,7,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_default,lua_only,pos,2,5,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_default,lua_only,pos,3,6,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_lang_lua_ts,lua_only,pos,1,6,0,1,1,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 1}"
+codefind_lang_lua_ts,lua_only,pos,2,6,0,1,1,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 1}"
+codefind_lang_lua_ts,lua_only,pos,3,6,0,1,1,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 1}"
+codefind_lang_all,lua_only,pos,1,6,0,1,1,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 1}"
+codefind_lang_all,lua_only,pos,2,6,0,1,1,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 1}"
+codefind_lang_all,lua_only,pos,3,7,0,1,1,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 1}"
+rg_single_naive,ts_only,pos,1,5,0,1,,0,1,0,0,rg_match,,,0,{}
+rg_single_naive,ts_only,pos,2,6,0,1,,0,1,0,0,rg_match,,,0,{}
+rg_single_naive,ts_only,pos,3,5,0,1,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,ts_only,pos,1,4,0,1,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,ts_only,pos,2,4,0,1,,0,1,0,0,rg_match,,,0,{}
+rg_single_scoped,ts_only,pos,3,4,0,1,,0,1,0,0,rg_match,,,0,{}
+codefind_default,ts_only,pos,1,6,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_default,ts_only,pos,2,7,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_default,ts_only,pos,3,6,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_lang_lua_ts,ts_only,pos,1,7,0,1,1,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 1}"
+codefind_lang_lua_ts,ts_only,pos,2,6,0,1,1,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 1}"
+codefind_lang_lua_ts,ts_only,pos,3,6,0,1,1,1,1,0,0,candidates_found,"lua,ts",1,1,"{""source"": 1}"
+codefind_lang_all,ts_only,pos,1,6,0,1,1,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 1}"
+codefind_lang_all,ts_only,pos,2,6,0,1,1,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 1}"
+codefind_lang_all,ts_only,pos,3,7,0,1,1,1,1,0,0,candidates_found,"go,lua,csharp,c,cpp,js,ts",1,1,"{""source"": 1}"
+rg_single_naive,neg_NotInTreeAnywhere,neg,1,3,1,0,,0,0,0,0,rg_no_match,,,0,{}
+rg_single_naive,neg_NotInTreeAnywhere,neg,2,4,1,0,,0,0,0,0,rg_no_match,,,0,{}
+rg_single_naive,neg_NotInTreeAnywhere,neg,3,5,1,0,,0,0,0,0,rg_no_match,,,0,{}
+rg_single_scoped,neg_NotInTreeAnywhere,neg,1,5,1,0,,0,0,0,0,rg_no_match,,,0,{}
+rg_single_scoped,neg_NotInTreeAnywhere,neg,2,4,1,0,,0,0,0,0,rg_no_match,,,0,{}
+rg_single_scoped,neg_NotInTreeAnywhere,neg,3,4,1,0,,0,0,0,0,rg_no_match,,,0,{}
+codefind_default,neg_NotInTreeAnywhere,neg,1,7,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_default,neg_NotInTreeAnywhere,neg,2,6,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_default,neg_NotInTreeAnywhere,neg,3,6,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_lang_lua_ts,neg_NotInTreeAnywhere,neg,1,6,0,0,0,1,0,0,0,no_candidates,"lua,ts",1,1,{}
+codefind_lang_lua_ts,neg_NotInTreeAnywhere,neg,2,6,0,0,0,1,0,0,0,no_candidates,"lua,ts",1,1,{}
+codefind_lang_lua_ts,neg_NotInTreeAnywhere,neg,3,7,0,0,0,1,0,0,0,no_candidates,"lua,ts",1,1,{}
+codefind_lang_all,neg_NotInTreeAnywhere,neg,1,6,0,0,0,1,0,0,0,no_candidates,"go,lua,csharp,c,cpp,js,ts",1,1,{}
+codefind_lang_all,neg_NotInTreeAnywhere,neg,2,6,0,0,0,1,0,0,0,no_candidates,"go,lua,csharp,c,cpp,js,ts",1,1,{}
+codefind_lang_all,neg_NotInTreeAnywhere,neg,3,6,0,0,0,1,0,0,0,no_candidates,"go,lua,csharp,c,cpp,js,ts",1,1,{}
+rg_single_naive,decoy_vendor_should_exclude,neg,1,3,0,1,,0,1,1,0,rg_match,,,0,{}
+rg_single_naive,decoy_vendor_should_exclude,neg,2,4,0,1,,0,1,1,0,rg_match,,,0,{}
+rg_single_naive,decoy_vendor_should_exclude,neg,3,4,0,1,,0,1,1,0,rg_match,,,0,{}
+rg_single_scoped,decoy_vendor_should_exclude,neg,1,4,1,0,,0,0,0,0,rg_no_match,,,0,{}
+rg_single_scoped,decoy_vendor_should_exclude,neg,2,4,1,0,,0,0,0,0,rg_no_match,,,0,{}
+rg_single_scoped,decoy_vendor_should_exclude,neg,3,5,1,0,,0,0,0,0,rg_no_match,,,0,{}
+codefind_default,decoy_vendor_should_exclude,neg,1,6,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_default,decoy_vendor_should_exclude,neg,2,6,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_default,decoy_vendor_should_exclude,neg,3,8,0,0,0,1,0,0,0,no_candidates,go,1,1,{}
+codefind_lang_lua_ts,decoy_vendor_should_exclude,neg,1,6,0,0,0,1,0,0,0,no_candidates,"lua,ts",1,1,{}
+codefind_lang_lua_ts,decoy_vendor_should_exclude,neg,2,6,0,0,0,1,0,0,0,no_candidates,"lua,ts",1,1,{}
+codefind_lang_lua_ts,decoy_vendor_should_exclude,neg,3,6,0,0,0,1,0,0,0,no_candidates,"lua,ts",1,1,{}
+codefind_lang_all,decoy_vendor_should_exclude,neg,1,6,0,0,0,1,0,0,0,no_candidates,"go,lua,csharp,c,cpp,js,ts",1,1,{}
+codefind_lang_all,decoy_vendor_should_exclude,neg,2,8,0,0,0,1,0,0,0,no_candidates,"go,lua,csharp,c,cpp,js,ts",1,1,{}
+codefind_lang_all,decoy_vendor_should_exclude,neg,3,6,0,0,0,1,0,0,0,no_candidates,"go,lua,csharp,c,cpp,js,ts",1,1,{}

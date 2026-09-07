@@ -1,0 +1,5 @@
+features:
+  arena_reward:
+    enabled: true
+    config_id: 100126
+    handler: ClaimArenaReward
