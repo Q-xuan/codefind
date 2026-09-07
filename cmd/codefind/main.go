@@ -38,6 +38,7 @@ func run(args []string, stdout, stderr io.Writer, search func(context.Context, f
 	var terms listFlag
 	var symbols listFlag
 	var paths listFlag
+	var languages listFlag
 	root := flag.String("root", "", "要搜索的仓库根目录")
 	format := flag.String("format", "text", "搜索格式：text 或 xlsx")
 	encoding := flag.String("encoding", "auto", "文件编码：auto、utf-8、gbk、gb18030；auto 不猜测 GBK")
@@ -48,6 +49,7 @@ func run(args []string, stdout, stderr io.Writer, search func(context.Context, f
 	flag.Var(&terms, "term", "领域词、动作词或历史别名，可重复")
 	flag.Var(&symbols, "symbol", "候选 symbol 或 test 词，可重复")
 	flag.Var(&paths, "path", "root 内的搜索目录，可重复；默认 .")
+	flag.Var(&languages, "lang", "源码语言，可重复：go（默认）、lua、csharp、c、cpp、js、ts、all；保留协议/配置/文档")
 	if err := flag.Parse(args); err != nil {
 		if errors.Is(err, flagpkg.ErrHelp) {
 			var help bytes.Buffer
@@ -79,6 +81,7 @@ func run(args []string, stdout, stderr io.Writer, search func(context.Context, f
 		Terms:      terms,
 		Symbols:    symbols,
 		Paths:      paths,
+		Languages:  languages,
 		MaxAnchors: *maxAnchors,
 		MaxMatches: *maxMatches,
 		Timeout:    *timeout,

@@ -44,6 +44,7 @@ var matchLine = regexp.MustCompile(`^(.*?):(\d+):(.*)$`)
 var ErrInvalidRequest = errors.New("invalid request")
 
 type Request struct {
+	Languages  []string      `json:"languages"`
 	Format     string        `json:"format"`
 	Encoding   string        `json:"encoding"`
 	Root       string        `json:"root"`
@@ -56,11 +57,12 @@ type Request struct {
 }
 
 type Query struct {
-	Format   string   `json:"format"`
-	Encoding string   `json:"encoding"`
-	Terms    []string `json:"terms"`
-	Symbols  []string `json:"symbols"`
-	Paths    []string `json:"paths"`
+	Languages []string `json:"languages"`
+	Format    string   `json:"format"`
+	Encoding  string   `json:"encoding"`
+	Terms     []string `json:"terms"`
+	Symbols   []string `json:"symbols"`
+	Paths     []string `json:"paths"`
 }
 
 type Anchor struct {
@@ -137,11 +139,12 @@ func Find(ctx context.Context, request Request) (Result, error) {
 		Engine:        "codefind",
 		Version:       Version,
 		Query: Query{
-			Format:   normalized.Format,
-			Encoding: normalized.Encoding,
-			Terms:    normalized.Terms,
-			Symbols:  normalized.Symbols,
-			Paths:    normalized.Paths,
+			Languages: normalized.Languages,
+			Format:    normalized.Format,
+			Encoding:  normalized.Encoding,
+			Terms:     normalized.Terms,
+			Symbols:   normalized.Symbols,
+			Paths:     normalized.Paths,
 		},
 		Anchors:  []Anchor{},
 		Unknowns: []string{},
@@ -188,7 +191,7 @@ func Find(ctx context.Context, request Request) (Result, error) {
 			budgetExceeded = true
 			break
 		}
-		rows, truncated, first, err := runRG(searchCtx, normalized.root, normalized.Paths, group.name, group.items, normalized.Encoding, remaining, started)
+		rows, truncated, first, err := runRG(searchCtx, normalized.root, normalized.Paths, group.name, group.items, normalized.Encoding, normalized.Languages, remaining, started)
 		result.Metrics.RGCalls++
 		if result.Metrics.FirstAnchorMS == nil && first != nil {
 			result.Metrics.FirstAnchorMS = first
@@ -244,6 +247,18 @@ func normalizeRequest(request Request) (normalizedRequest, error) {
 	}
 	if request.Format != "text" && request.Format != "xlsx" {
 		return normalizedRequest{}, errors.New("format 必须为 text 或 xlsx")
+	}
+	if request.Format == "xlsx" {
+		if len(request.Languages) > 0 {
+			return normalizedRequest{}, errors.New("xlsx 不接受 --lang")
+		}
+		request.Languages = []string{}
+	} else {
+		var err error
+		request.Languages, err = normalizeLanguages(request.Languages)
+		if err != nil {
+			return normalizedRequest{}, err
+		}
 	}
 	request.Encoding = strings.ToLower(strings.TrimSpace(request.Encoding))
 	if request.Encoding == "" {
@@ -327,7 +342,7 @@ func normalizeRequest(request Request) (normalizedRequest, error) {
 	return normalizedRequest{Request: request, root: root}, nil
 }
 
-func runRG(ctx context.Context, root string, paths []string, group string, patterns []string, encoding string, maxMatches int, started time.Time) ([]rawMatch, bool, *int64, error) {
+func runRG(ctx context.Context, root string, paths []string, group string, patterns []string, encoding string, languages []string, maxMatches int, started time.Time) ([]rawMatch, bool, *int64, error) {
 	groupCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -342,10 +357,7 @@ func runRG(ctx context.Context, root string, paths []string, group string, patte
 		"--max-columns", "300",
 		"--max-columns-preview",
 	}
-	for _, glob := range []string{
-		"*.go", "*.proto", "*.md", "*.csv", "*.yaml", "*.yml",
-		"!**/.git/**", "!**/vendor/**", "!**/node_modules/**", "!**/*.min.js",
-	} {
+	for _, glob := range searchGlobs(languages) {
 		args = append(args, "--glob", glob)
 	}
 	for _, pattern := range patterns {
@@ -576,6 +588,11 @@ func classify(path string, text string) string {
 		return "generated"
 	case strings.HasSuffix(lowerPath, ".go") && (strings.HasSuffix(lowerPath, "_test.go") || strings.Contains(segments, "/test/") || strings.Contains(segments, "/tests/")):
 		return "test"
+	case isLexicalSource(path) && !strings.HasSuffix(lowerPath, ".go"):
+		if strings.Contains(segments, "/tests/") || strings.Contains(segments, "/test/") {
+			return "test"
+		}
+		return "source"
 	case strings.HasPrefix(lowerText, "func ") || strings.HasPrefix(lowerText, "type ") || strings.HasPrefix(lowerText, "const ") || strings.HasPrefix(lowerText, "var "):
 		return "source"
 	default:

@@ -103,6 +103,29 @@ On Windows, use `codefind.exe` as the output filename.
 
 ## Usage
 
+### Multi-language source search
+
+The default keeps Go source scope for compatibility. Repeat `--lang` to select other languages, or use `--lang all`:
+
+```sh
+codefind --root ./game-project --lang lua --lang ts --symbol ClaimReward
+codefind --root ./game-project --lang all --term "reward"
+```
+
+| Language | Flag value | Extensions |
+| --- | --- | --- |
+| Go | go (default) | .go |
+| Lua | lua | .lua |
+| C# | csharp (aliases cs, c#) | .cs |
+| C | c | .c, .h |
+| C++ | cpp (alias c++) | .cpp, .cc, .cxx, .h, .hpp, .hh, .hxx, .C |
+| JavaScript | js (alias javascript) | .js, .jsx, .mjs, .cjs |
+| TypeScript | ts (alias typescript) | .ts, .tsx, .mts, .cts |
+
+Language selection narrows source extensions, while Proto, Markdown, CSV and YAML remain searchable. Use `--path` to narrow directories. Minified JS, vendor and node_modules remain excluded. Unknown languages produce invalid_request; xlsx rejects --lang. `query.languages` echoes normalized, deduplicated languages (empty for xlsx).
+
+Non-Go results are lexical candidates without AST or definition/call claims: source means source text, and test directories are classified as test. Go keeps its existing AST enrichment. No compiler, index or language server is added; all languages share the existing call and resource budgets.
+
 ### Progressive readback after search
 
 Read one explicitly authorized workbook and worksheet after locating a match:
@@ -158,6 +181,7 @@ Provide at least one `--term` or `--symbol`. Repeat either flag to send multiple
 | `--timeout` | Total search timeout | 2s / maximum 10s |
 | `--encoding` | File encoding for this request: `auto`, `utf-8`, `gbk`, `gb18030` | `auto` |
 | `--format` | Search mode: `text` or `xlsx` | `text` |
+| `--lang` | Source language, repeatable; all selects every supported language | `go` |
 | `--version` | Print the version and exit | - |
 
 ## JSON contract
@@ -207,7 +231,7 @@ The human-readable `text` and `unknowns` values may change. Branch on `schema_ve
 | Kind | Typical match |
 | --- | --- |
 | `test` | Go tests or files in test directories |
-| `source` | Go declarations such as `func`, `type`, `const`, or `var` |
+| `source` | Go declarations, or lexical source candidates in other selected languages (not proof of a definition) |
 | `consumer` | Other source usages and call sites |
 | `protocol` | Protocol Buffers definitions |
 | `config` | CSV or YAML configuration |
@@ -232,7 +256,7 @@ Budgets are part of the result contract:
 
 ## Default search scope
 
-`text` mode searches Go, Protocol Buffers, Markdown, CSV, and YAML files. It excludes `.git`, `vendor`, `node_modules`, and minified JavaScript by default. See above for `xlsx` traversal rules. Neither mode expands beyond the directories supplied through `--path`.
+`text` mode defaults to Go, Protocol Buffers, Markdown, CSV, and YAML; `--lang` selects additional supported source languages. It excludes `.git`, `vendor`, `node_modules`, and minified JavaScript by default. See above for `xlsx` traversal rules. Neither mode expands beyond the directories supplied through `--path`.
 
 Each request accepts one `--root`. Multiple repositories or ordinary directories under the same authorized root can be searched through repeated `--path` flags; arbitrary separate roots are not supported in one request. Applicable ripgrep ignore rules, including `.gitignore`, still apply, so not every file under the root is necessarily searched.
 

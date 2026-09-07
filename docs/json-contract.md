@@ -2,6 +2,8 @@
 
 ## Compatibility
 
+Unreleased addition: `query.languages` echoes normalized source-language selection (default ["go"], empty for xlsx). `--lang` is repeatable; Proto/config/docs remain available. Non-Go `source` anchors are lexical locations, not declarations or syntax relationships. No new syntax authority is introduced.
+
 The default remains text search. `codefind-result-v1` retains positive physical `line` numbers for text anchors. New `query.format` and `query.encoding` fields are additive. Consumers must ignore unknown fields and dispatch by schema plus format, not human-readable messages or exact JSON key order.
 
 XLSX search is explicitly requested by `--format xlsx`: its anchors use `workbook.sheet/cell/source` and omit `line`. Do not pass these anchors to an old text-only validator. `source` is cell or comment. Cached formula results may be stale. Search output is a shortlist, not proof of absence or a semantic relation.

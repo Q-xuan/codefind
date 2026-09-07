@@ -62,6 +62,18 @@ func TestHelpVersionAndSuccess(t *testing.T) {
 
 type brokenWriter struct{}
 
+func TestLanguageFlags(t *testing.T) {
+	code := run([]string{"--lang", "lua", "--lang", "ts"}, io.Discard, io.Discard, func(_ context.Context, req find.Request) (find.Result, error) {
+		if len(req.Languages) != 2 || req.Languages[0] != "lua" || req.Languages[1] != "ts" {
+			t.Fatal(req.Languages)
+		}
+		return find.Result{}, nil
+	})
+	if code != 0 {
+		t.Fatal(code)
+	}
+}
+
 func TestEncodingFlag(t *testing.T) {
 	for _, value := range []string{"auto", "utf-8", "gbk", "gb18030"} {
 		code := run([]string{"--encoding", value}, io.Discard, io.Discard, func(_ context.Context, req find.Request) (find.Result, error) {

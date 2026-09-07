@@ -103,6 +103,29 @@ Windows 请把输出文件名改为 `codefind.exe`。
 
 ## 使用
 
+### 多语言源码搜索
+
+默认保留 Go 源码范围以兼容已有调用；用可重复的 `--lang` 选择其他语言，或 `--lang all` 开启全部支持语言：
+
+```sh
+codefind --root ./game-project --lang lua --lang ts --symbol ClaimReward
+codefind --root ./game-project --lang all --term "reward"
+```
+
+| 语言 | 参数 | 文件后缀 |
+| --- | --- | --- |
+| Go | go（默认） | .go |
+| Lua | lua | .lua |
+| C# | csharp（别名 cs、c#） | .cs |
+| C | c | .c、.h |
+| C++ | cpp（别名 c++） | .cpp、.cc、.cxx、.h、.hpp、.hh、.hxx、.C |
+| JavaScript | js（别名 javascript） | .js、.jsx、.mjs、.cjs |
+| TypeScript | ts（别名 typescript） | .ts、.tsx、.mts、.cts |
+
+语言选择只限制源码类型，仍搜索 Proto、Markdown、CSV、YAML；`--path` 可继续缩小目录范围。JS minified 文件、vendor 和 node_modules 继续排除。不识别的语言报 invalid_request，xlsx 模式拒绝 --lang。`query.languages` 返回去重、规范化后的实际语言列表；xlsx 返回空列表。
+
+除 Go 外均为字面量源码候选，不标注 AST、定义或调用关系；`source` 在这些语言中仅表示源码文本，测试目录内归为 `test`。Go 保留原有 AST 证据。不新增编译器、索引或语言服务，所有语言共享原有搜索次数与预算。
+
 ### 搜索之后渐进式回读
 
 找到 XLSX 位置后，使用 `read` 子命令，只读取明确授权的单工作簿和工作表：
@@ -158,6 +181,7 @@ codefind --root .\game-project `
 | `--timeout` | 整次搜索的总超时 | 2s / 最高 10s |
 | `--encoding` | 本次搜索的文件编码：`auto`、`utf-8`、`gbk`、`gb18030` | `auto` |
 | `--format` | 搜索模式：`text` 或 `xlsx` | `text` |
+| `--lang` | 源码语言，可重复；`all` 选择全部，详见上表 | `go` |
 | `--version` | 输出版本后退出 | - |
 
 ## JSON Contract
@@ -207,7 +231,7 @@ codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 | 类型 | 常见匹配 |
 | --- | --- |
 | `test` | Go 测试或测试目录内的文件 |
-| `source` | `func`、`type`、`const`、`var` 等 Go 声明 |
+| `source` | Go 声明，或其他所选语言的普通源码候选（不证明定义） |
 | `consumer` | 其他源码使用位置和调用点 |
 | `protocol` | Protocol Buffers 定义 |
 | `config` | CSV 或 YAML 配置 |
@@ -232,7 +256,7 @@ codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 
 ## 默认搜索范围
 
-`text` 模式搜索 Go、Protocol Buffers、Markdown、CSV 和 YAML 文件，默认排除 `.git`、`vendor`、`node_modules` 与 minified JavaScript。`xlsx` 模式的范围规则见上文。它不会自动扩大调用方通过 `--path` 提供的目录范围。
+`text` 模式默认搜索 Go、Protocol Buffers、Markdown、CSV 和 YAML；`--lang` 可选择额外支持的源码语言。默认排除 `.git`、`vendor`、`node_modules` 与 minified JavaScript。`xlsx` 模式的范围规则见上文。它不会自动扩大调用方通过 `--path` 提供的目录范围。
 
 每次请求只接受一个 `--root`。多个仓库或普通目录位于同一授权根目录下时，可以通过多个 `--path` 搜索；不支持一次指定任意分散的多个根目录。搜索仍遵循适用的 `.gitignore` 等 ripgrep 忽略规则，不保证枚举根目录下的所有文件。
 

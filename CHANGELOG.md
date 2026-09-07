@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add opt-in Lua, C#, C/C++, JavaScript and TypeScript lexical search through repeatable --lang; --lang all selects every supported language. Default Go scope and domain evidence remain unchanged; only Go receives AST enrichment.
+
 ## [0.2.0-rc.1] - 2026-09-07
 
 Local prerelease candidate; no remote tag or public release is implied.
