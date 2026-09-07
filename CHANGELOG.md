@@ -1,18 +1,37 @@
 # Changelog
 
-本项目的重要变更记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)，版本遵循 [Semantic Versioning](https://semver.org/)。
+## [0.2.0-rc.1] - 2026-09-07
 
-## [0.1.0] - Unreleased
+Local prerelease candidate; no remote tag or public release is implied.
 
 ### Added
 
-- 面向 AI Coding Agent 的有预算字面量代码发现 CLI。
-- `codefind-result-v1` JSON Contract，以及候选、零命中、预算超限和工具不可用状态。
-- 对 lexical shortlist 中的 Go 候选提供受限 `go/ast` 语法证据与解析预算指标，不声明类型解析后的语义边。
-- 搜索根目录与 symlink 越界检查。
-- Windows、Linux、macOS CI 验证。
+- Game-oriented discovery across source, protocols, configuration and documentation.
+- Explicit text encodings: auto, utf-8, gbk and gb18030.
+- Read-only XLSX search with workbook/sheet/cell/comment anchors, metadata ordering, per-file budgets and scan coverage.
+- Workbook/sheet-diverse candidate projection to reduce repeated hits crowding out other sources.
+- `read` subcommand with explicit ranges, adaptive structure selection, downward-header fallback, formula/cache separation, comments and merge coordinates.
+- Synthetic game cases, real-executable search-to-read E2E checks and bounded-context evaluation.
 
-### Security
+### Fixed
 
-- 限制搜索路径、执行次数、原始匹配数、输出锚点数和总超时。
-- 目标仓库保持只读，结果只返回相对路径。
+- Search symbols before broad terms; compute projection truncation after deduplication.
+- Disable user ripgrep configuration; distinguish invalid requests and execution failures in JSON.
+- Classify supported files by extension before directory hints.
+- Prefer whole-number ID matches when equal-length patterns compete.
+- Preserve physical Go line positions despite //line directives.
+- Report output failures for help and respect cancellation during readback selection.
+
+### Boundaries
+
+- Existing default text mode remains compatible with positive-line text adapters.
+- XLSX search explicitly uses workbook coordinates instead of line; read uses codefind-read-v1.
+- No OCR, formula recalculation, indexing, runtime business claims or automatic cross-root access.
+- Windows amd64 package is locally validated; remote Windows/Linux/macOS CI and public publication remain separate gates.
+
+## [0.1.0] - Previous baseline
+
+### Added
+
+- Budget-aware literal code discovery, codefind-result-v1 and bounded Go AST syntax evidence.
+- Root/symlink containment checks and Windows/Linux/macOS CI configuration.

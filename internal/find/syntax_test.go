@@ -89,6 +89,15 @@ func TestSyntaxSymbolsUseLastIdentifierPerSegment(t *testing.T) {
 	}
 }
 
+func TestSyntaxLineDirectiveUsesPhysicalLine(t *testing.T) {
+	requireRG(t)
+	root := makeRepo(t, map[string]string{"main.go": "package p\n//line virtual.go:100\nfunc Target() {}\n"})
+	r, e := Find(context.Background(), Request{Root: root, Symbols: []string{"Target"}})
+	if e != nil || len(r.Anchors) != 1 || r.Anchors[0].Line != 3 || r.Anchors[0].Syntax == nil {
+		t.Fatalf("r=%+v e=%v", r, e)
+	}
+}
+
 func TestFindSkipsOversizedGoFileForSyntax(t *testing.T) {
 	requireRG(t)
 	root := makeRepo(t, map[string]string{

@@ -164,7 +164,8 @@ func collectSyntaxHits(fset *token.FileSet, file *ast.File, symbols map[string]s
 		if role == "" {
 			role = SyntaxRoleReference
 		}
-		line := fset.Position(identifier.Pos()).Line
+		// rg reports physical lines, not positions remapped by //line directives.
+		line := fset.PositionFor(identifier.Pos(), false).Line
 		candidate := syntaxHit{role: role, symbol: identifier.Name}
 		current, exists := hits[line]
 		if !exists || syntaxRolePriority(candidate.role) < syntaxRolePriority(current.role) ||

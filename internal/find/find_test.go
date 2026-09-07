@@ -223,6 +223,43 @@ func requireRG(t *testing.T) {
 	}
 }
 
+func TestSymbolsGetBudgetBeforeTerms(t *testing.T) {
+	requireRG(t)
+	root := makeRepo(t, map[string]string{"main.go": "package main\nfunc Target() {}\n// broad\n// broad\n"})
+	result, err := Find(context.Background(), Request{Root: root, Terms: []string{"broad"}, Symbols: []string{"Target"}, MaxAnchors: 1, MaxMatches: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusBudgetExceeded || result.Metrics.RGCalls != 1 || len(result.Anchors) != 1 || !contains(result.Anchors[0].Groups, "symbols") {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestDuplicateGroupsDoNotMeanTruncation(t *testing.T) {
+	requireRG(t)
+	root := makeRepo(t, map[string]string{"main.go": "package main\nfunc Target() {}\n"})
+	result, err := Find(context.Background(), Request{Root: root, Terms: []string{"Target"}, Symbols: []string{"Target"}, MaxAnchors: 1, MaxMatches: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Metrics.Truncated || result.Metrics.RawMatches != 2 || len(result.Anchors) != 1 || len(result.Anchors[0].Groups) != 2 {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestFindIgnoresRGConfig(t *testing.T) {
+	requireRG(t)
+	root := makeRepo(t, map[string]string{"main.go": "package main\nfunc Target() {}\n", "rg.config": "--files\n"})
+	t.Setenv("RIPGREP_CONFIG_PATH", filepath.Join(root, "rg.config"))
+	result, err := Find(context.Background(), Request{Root: root, Symbols: []string{"Target"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusCandidatesFound || !hasPath(result.Anchors, "main.go") {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
 func makeRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()

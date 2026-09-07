@@ -1,32 +1,30 @@
-# v0.1.0 Release Checklist
+# v0.2.0-rc.1 Local Release Checklist
 
-本文件集中记录发布前检查；它不是自动发布框架。
+This is a local prerelease closeout, not authorization to publish a Git tag or remote release.
 
-## 仓库命名
+## Local gates
 
-- [x] GitHub 仓库：`Q-xuan/codefind`
-- [x] Canonical Go module path：`github.com/Q-xuan/codefind`
+- [x] Review default text compatibility and new XLSX/read result shapes; see docs/json-contract.md.
+- [x] Add real-executable E2E: search unknown position → read returned coordinate → verify source hash unchanged.
+- [x] Preserve formula/cache distinction, partial results and bounded readback; regression-test malformed arguments and source line directives.
+- [x] Set producer version to 0.2.0-rc.1 and separate the changelog from the previous baseline.
+- [x] Final go test ./..., go vet ./..., formatting/diff checks.
+- [x] Build Windows amd64 package, verify manifest/hash and packaged-binary E2E.
+- [x] Cross-compile Linux amd64 and macOS arm64 (not equivalent to native runtime tests).
+- [x] Copy verified package binary to 下游私有项目/cli/codefind and validate text Shadow adapter.
+- [x] Validate updated Excel skill entrypoint and existing catalog tests.
+- [x] Scan public package inputs for private paths/credentials; include synthetic tests only.
 
-## 发布前
+## Packaging
 
-- [ ] 确认 `git status` 只包含预期文件。
-- [ ] 运行 `go fmt ./...`，并确认没有 diff。
-- [ ] 运行 `go test ./...`、`go vet ./...`、`go build ./cmd/codefind`。
-- [ ] 在 Windows、Linux、macOS CI 中确认 `rg` 可用且全部 job 通过。
-- [ ] 扫描凭据、私钥、本机绝对路径、私有仓库名和真实业务样例。
-- [ ] 把 CHANGELOG 的 `Unreleased` 替换为发布日期。
-- [ ] 确认 `codefind --version` 输出 `0.1.0`。
-- [ ] 创建并审查首个提交；确认 MIT License 与提交作者信息。
+Run `pwsh -File tools/package.ps1` from the repository. It refuses to overwrite an existing version directory/archive. Package includes executable, docs, license, source snapshot, source hashes and binary hash. ZIP SHA-256 is written alongside it. It does not bundle ripgrep or private workbooks.
 
-## 发布
+The manifest says `source_state=working-tree` and records the base commit plus file digests. This is not a claim that the tree has been committed/tagged.
 
-- [ ] 创建公开 remote 并推送（需要仓库 owner 授权）。
-- [ ] 创建带注释的 `v0.1.0` tag 并推送。
-- [ ] 从 tag 重新运行 CI。
-- [ ] 发布简短 release notes，链接 CHANGELOG；本版本不要求二进制发布框架。
+## Separate public-release gates (not performed locally)
 
-## 发布后
+- [ ] Native Windows/Linux/macOS CI on the release revision.
+- [ ] User-authorized commit/tag/push and public release upload.
+- [ ] Verify go install from a published version in a clean environment.
 
-- [ ] 从干净目录验证 README 的 clone/build 示例。
-- [ ] 验证 `go install github.com/Q-xuan/codefind/cmd/codefind@v0.1.0`。
-- [ ] 启用私密漏洞报告渠道。
+No remote CI status, public availability or clean Git state should be inferred from this local package.

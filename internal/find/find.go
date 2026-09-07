@@ -14,11 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
 	SchemaVersion = "codefind-result-v1"
-	Version       = "0.1.0"
+	Version       = "0.2.0-rc.1"
 )
 
 const (
@@ -39,7 +40,12 @@ const (
 
 var matchLine = regexp.MustCompile(`^(.*?):(\d+):(.*)$`)
 
+// ErrInvalidRequest identifies validation errors separately from execution failures.
+var ErrInvalidRequest = errors.New("invalid request")
+
 type Request struct {
+	Format     string        `json:"format"`
+	Encoding   string        `json:"encoding"`
 	Root       string        `json:"root"`
 	Terms      []string      `json:"terms"`
 	Symbols    []string      `json:"symbols"`
@@ -50,24 +56,28 @@ type Request struct {
 }
 
 type Query struct {
-	Terms   []string `json:"terms"`
-	Symbols []string `json:"symbols"`
-	Paths   []string `json:"paths"`
+	Format   string   `json:"format"`
+	Encoding string   `json:"encoding"`
+	Terms    []string `json:"terms"`
+	Symbols  []string `json:"symbols"`
+	Paths    []string `json:"paths"`
 }
 
 type Anchor struct {
-	Kind        string          `json:"kind"`
-	Path        string          `json:"path"`
-	Line        int             `json:"line"`
-	Text        string          `json:"text"`
-	Groups      []string        `json:"groups"`
-	Syntax      *SyntaxEvidence `json:"syntax,omitempty"`
+	Kind        string            `json:"kind"`
+	Path        string            `json:"path"`
+	Line        int               `json:"line,omitempty"`
+	Workbook    *WorkbookLocation `json:"workbook,omitempty"`
+	Text        string            `json:"text"`
+	Groups      []string          `json:"groups"`
+	Syntax      *SyntaxEvidence   `json:"syntax,omitempty"`
 	pathRank    int
 	specificity int
 	paired      bool
 }
 
 type Metrics struct {
+	XLSXFilesScanned   int    `json:"xlsx_files_scanned,omitempty"`
 	AgentCalls         int    `json:"agent_calls"`
 	RGCalls            int    `json:"rg_calls"`
 	ElapsedMS          int64  `json:"elapsed_ms"`
@@ -88,16 +98,17 @@ type Limits struct {
 }
 
 type Result struct {
-	SchemaVersion  string   `json:"schema_version"`
-	Engine         string   `json:"engine"`
-	Version        string   `json:"version"`
-	Status         string   `json:"status"`
-	Query          Query    `json:"query"`
-	Anchors        []Anchor `json:"anchors"`
-	Unknowns       []string `json:"unknowns"`
-	Metrics        Metrics  `json:"metrics"`
-	Limits         Limits   `json:"limits"`
-	ExternalWrites int      `json:"external_writes"`
+	WorkbookCoverage *WorkbookCoverage `json:"workbook_coverage,omitempty"`
+	SchemaVersion    string            `json:"schema_version"`
+	Engine           string            `json:"engine"`
+	Version          string            `json:"version"`
+	Status           string            `json:"status"`
+	Query            Query             `json:"query"`
+	Anchors          []Anchor          `json:"anchors"`
+	Unknowns         []string          `json:"unknowns"`
+	Metrics          Metrics           `json:"metrics"`
+	Limits           Limits            `json:"limits"`
+	ExternalWrites   int               `json:"external_writes"`
 }
 
 type rawMatch struct {
@@ -118,7 +129,7 @@ func Find(ctx context.Context, request Request) (Result, error) {
 	started := time.Now()
 	normalized, err := normalizeRequest(request)
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 
 	result := Result{
@@ -126,9 +137,11 @@ func Find(ctx context.Context, request Request) (Result, error) {
 		Engine:        "codefind",
 		Version:       Version,
 		Query: Query{
-			Terms:   normalized.Terms,
-			Symbols: normalized.Symbols,
-			Paths:   normalized.Paths,
+			Format:   normalized.Format,
+			Encoding: normalized.Encoding,
+			Terms:    normalized.Terms,
+			Symbols:  normalized.Symbols,
+			Paths:    normalized.Paths,
 		},
 		Anchors:  []Anchor{},
 		Unknowns: []string{},
@@ -143,6 +156,9 @@ func Find(ctx context.Context, request Request) (Result, error) {
 		ExternalWrites: 0,
 	}
 
+	if normalized.Format == "xlsx" {
+		return findWorkbooks(ctx, normalized, result, started)
+	}
 	if _, err := exec.LookPath("rg"); err != nil {
 		result.Status = StatusToolUnavailable
 		result.Unknowns = append(result.Unknowns, "rg 不可用，未执行代码发现。")
@@ -157,8 +173,8 @@ func Find(ctx context.Context, request Request) (Result, error) {
 		name  string
 		items []string
 	}{
-		{name: "terms", items: normalized.Terms},
 		{name: "symbols", items: normalized.Symbols},
+		{name: "terms", items: normalized.Terms},
 	}
 
 	all := make([]rawMatch, 0, normalized.MaxAnchors*2)
@@ -172,7 +188,7 @@ func Find(ctx context.Context, request Request) (Result, error) {
 			budgetExceeded = true
 			break
 		}
-		rows, truncated, first, err := runRG(searchCtx, normalized.root, normalized.Paths, group.name, group.items, remaining, started)
+		rows, truncated, first, err := runRG(searchCtx, normalized.root, normalized.Paths, group.name, group.items, normalized.Encoding, remaining, started)
 		result.Metrics.RGCalls++
 		if result.Metrics.FirstAnchorMS == nil && first != nil {
 			result.Metrics.FirstAnchorMS = first
@@ -205,7 +221,7 @@ func Find(ctx context.Context, request Request) (Result, error) {
 	}
 	result.Anchors = projectAnchors(shortlist, normalized.MaxAnchors)
 	result.Metrics.ProjectedAnchor = len(result.Anchors)
-	result.Metrics.Truncated = budgetExceeded || len(all) > normalized.MaxAnchors
+	result.Metrics.Truncated = budgetExceeded || len(anchors) > len(result.Anchors)
 	result.Metrics.ElapsedMS = time.Since(started).Milliseconds()
 
 	switch {
@@ -222,6 +238,25 @@ func Find(ctx context.Context, request Request) (Result, error) {
 }
 
 func normalizeRequest(request Request) (normalizedRequest, error) {
+	request.Format = strings.ToLower(strings.TrimSpace(request.Format))
+	if request.Format == "" {
+		request.Format = "text"
+	}
+	if request.Format != "text" && request.Format != "xlsx" {
+		return normalizedRequest{}, errors.New("format 必须为 text 或 xlsx")
+	}
+	request.Encoding = strings.ToLower(strings.TrimSpace(request.Encoding))
+	if request.Encoding == "" {
+		request.Encoding = "auto"
+	}
+	switch request.Encoding {
+	case "auto", "utf-8", "gbk", "gb18030":
+	default:
+		return normalizedRequest{}, errors.New("encoding 必须为 auto、utf-8、gbk 或 gb18030")
+	}
+	if request.Format == "xlsx" && request.Encoding != "auto" {
+		return normalizedRequest{}, errors.New("xlsx 使用内部 XML 编码，不能指定 --encoding")
+	}
 	request.Terms = cleanList(request.Terms)
 	request.Symbols = cleanList(request.Symbols)
 	request.Paths = cleanList(request.Paths)
@@ -292,11 +327,13 @@ func normalizeRequest(request Request) (normalizedRequest, error) {
 	return normalizedRequest{Request: request, root: root}, nil
 }
 
-func runRG(ctx context.Context, root string, paths []string, group string, patterns []string, maxMatches int, started time.Time) ([]rawMatch, bool, *int64, error) {
+func runRG(ctx context.Context, root string, paths []string, group string, patterns []string, encoding string, maxMatches int, started time.Time) ([]rawMatch, bool, *int64, error) {
 	groupCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	args := []string{
+		"--no-config",
+		"--encoding", encoding,
 		"--fixed-strings",
 		"--line-number",
 		"--with-filename",
@@ -527,17 +564,18 @@ func evidencePairKey(path string) (string, bool, bool) {
 func classify(path string, text string) string {
 	lowerPath := strings.ToLower(filepath.ToSlash(path))
 	lowerText := strings.ToLower(strings.TrimSpace(text))
+	segments := "/" + lowerPath
 	switch {
-	case strings.HasSuffix(lowerPath, "_test.go") || strings.Contains(lowerPath, "/test/") || strings.Contains(lowerPath, "/tests/"):
-		return "test"
-	case strings.HasSuffix(lowerPath, ".pb.go") || strings.HasSuffix(lowerPath, "_gen.go") || strings.Contains(lowerPath, "/generated/") || strings.HasPrefix(filepath.Base(lowerPath), "zz_"):
-		return "generated"
-	case strings.HasSuffix(lowerPath, ".proto") || strings.Contains(lowerPath, "/proto/"):
+	case strings.HasSuffix(lowerPath, ".proto"):
 		return "protocol"
-	case strings.HasSuffix(lowerPath, ".csv") || strings.HasSuffix(lowerPath, ".yaml") || strings.HasSuffix(lowerPath, ".yml") || strings.Contains(lowerPath, "data/tables/"):
+	case strings.HasSuffix(lowerPath, ".csv") || strings.HasSuffix(lowerPath, ".yaml") || strings.HasSuffix(lowerPath, ".yml"):
 		return "config"
-	case strings.HasSuffix(lowerPath, ".md") || strings.HasPrefix(lowerPath, "docs/"):
+	case strings.HasSuffix(lowerPath, ".md"):
 		return "docs"
+	case strings.HasSuffix(lowerPath, ".go") && (strings.HasSuffix(lowerPath, ".pb.go") || strings.HasSuffix(lowerPath, "_gen.go") || strings.Contains(segments, "/generated/") || strings.HasPrefix(filepath.Base(lowerPath), "zz_")):
+		return "generated"
+	case strings.HasSuffix(lowerPath, ".go") && (strings.HasSuffix(lowerPath, "_test.go") || strings.Contains(segments, "/test/") || strings.Contains(segments, "/tests/")):
+		return "test"
 	case strings.HasPrefix(lowerText, "func ") || strings.HasPrefix(lowerText, "type ") || strings.HasPrefix(lowerText, "const ") || strings.HasPrefix(lowerText, "var "):
 		return "source"
 	default:
@@ -587,11 +625,36 @@ func pathPriority(path string, roots []string) int {
 func matchSpecificity(text string, patterns []string) int {
 	best := 0
 	for _, pattern := range patterns {
-		if strings.Contains(text, pattern) && len([]rune(pattern)) > best {
-			best = len([]rune(pattern))
+		if strings.Contains(text, pattern) {
+			// Keep longer literals ahead; break equal-length numeric matches
+			// in favor of complete IDs without discarding substring candidates.
+			score := 2 * len([]rune(pattern))
+			if wholeNumberMatch(text, pattern) {
+				score++
+			}
+			best = max(best, score)
 		}
 	}
 	return best
+}
+
+func wholeNumberMatch(text, pattern string) bool {
+	if pattern == "" {
+		return false
+	}
+	for _, r := range pattern {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	value, number := []rune(text), []rune(pattern)
+	for i := 0; i+len(number) <= len(value); i++ {
+		end := i + len(number)
+		if (i == 0 || !unicode.IsDigit(value[i-1])) && (end == len(value) || !unicode.IsDigit(value[end])) && string(value[i:end]) == pattern {
+			return true
+		}
+	}
+	return false
 }
 
 func cleanList(values []string) []string {

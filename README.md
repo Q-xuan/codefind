@@ -5,11 +5,61 @@
 
 English | [简体中文](README_CN.md)
 
-`codefind` is a budget-aware code discovery CLI for AI coding agents. It turns domain terms and candidate symbols into at most two bounded [`rg`](https://github.com/BurntSushi/ripgrep) literal searches, then returns a small set of source anchors for follow-up reading.
+Local prerelease: **0.2.0-rc.1**. See [JSON compatibility](docs/json-contract.md) and [release checks](RELEASE_CHECKLIST.md). Public installation commands below use published revisions and may not include this local candidate yet.
+
+`codefind` is a budget-aware discovery CLI for AI coding agents working on game projects. It searches gameplay names, configuration IDs, historical aliases, and candidate symbols across Go source, Proto definitions, CSV / YAML configuration, and Markdown documentation—without building a code graph.
+
+Text mode uses at most two bounded [`rg`](https://github.com/BurntSushi/ripgrep) literal searches. XLSX mode reads workbook content natively. Both return a small set of candidate locations for follow-up reading.
 
 Its job is to narrow the reading surface—not to decide whether a feature exists. `codefind` is not a Code Graph and does not build semantic edges.
 
+## Why game projects
+
+Clues to a gameplay feature can span server logic, network protocols, balance tables, feature switches, and design documents—not just function calls.
+
+- **Search across content types**: use gameplay names, protocol names, or configuration IDs to find literal-match candidates in source, protocols, configuration, and documentation.
+- **No code package or Git repository required**: supported text files in ordinary directories are searchable without compilation or indexing.
+- **Read current on-disk content**: locate implementation, tests, and data clues before an agent changes gameplay logic.
+- **Keep evidence boundaries explicit**: shared matches do not prove a business relationship, and zero hits do not prove absence. Candidates still require inspection.
+
+The current scope best fits games using Go for logic alongside Proto and CSV / YAML. It does not cover every game-engine language or binary asset, and does not replace type-aware call graphs or impact analysis.
+
 ## Highlights
+
+### XLSX design workbooks
+
+Use a separate read-only mode to search stored Excel cell values (including cached formula results) and legacy comments:
+
+```sh
+codefind --root ./design/math --format xlsx --term Pvp --term "挑战券" --timeout 10s
+```
+
+This mode needs neither rg nor Excel and builds no index. Matches contain `kind: config`, a relative workbook `path`, `text`, `groups`, and `workbook: {sheet, cell, source}`. `source` is `cell` or `comment`; source-code `line` is omitted. A cell and its comment may match separately; no comment match does not imply no comment exists. `query.format` identifies `text` or `xlsx`.
+
+When the file is unknown, search the directory directly. Bounded sheet-name metadata is read first; matching workbook and sheet names raise priority. Name matching is case-insensitive and affects ordering only; content matching remains case-sensitive and literal. Ties favor smaller workbooks. No gameplay aliases are inferred and name mismatches never exclude a file. Matching sheet names are also scanned first inside each workbook.
+
+Output uses two-level round-robin allocation across matched workbooks and their matched sheets, preserving relevance order within each sheet. This reduces domination by repeated hits from one sheet, but cannot guarantee every sheet fits a small output budget. It only selects already-scanned candidates; scan scope and budgets do not expand. Cross-sheet output may trade strict symbol priority for source diversity.
+
+`workbook_coverage.files` lists discovered files in scan order: `complete` means supported content was scanned, `partial` means unfinished, and `pending` means not started. `reason` distinguishes `file_timeout`, `total_timeout`, `match_limit`, and `file_size_or_xml_limit`. `metadata_status` independently reports name-metadata availability. `discovery_complete: false` means enumeration was limited, so the list is not exhaustive. Complete does not imply OCR, formula evaluation, or business understanding.
+
+Metadata uses at most 20% of the total timeout, with at most 50ms and 1 MiB of XML reads per workbook. Metadata failures fall back to filename/size ordering without dropping the file. Each content scan gets at most total timeout divided by `min(discovered files, 4)`, bounded by remaining global time. File-time or size limits allow later files to proceed; global time or match limits stop the request. Any incomplete scan produces `budget_exceeded`, even with candidates or unused global time. There is no resumable cursor; retries restart reading.
+
+Scope and limits:
+
+- The default remains `--format text`. Run the modes separately; XLSX rejects non-auto `--encoding`.
+- Matching is case-sensitive and literal. Sheet names, images, screenshots, threaded comments, and formula expressions are not searched. Formulas are not recalculated, cached results may be stale, numeric/date display formatting is not rendered, and merged cells are located at the cell actually storing the value. Fields are not interpreted.
+- The request shares `--timeout`, `--max-matches`, and `--max-anchors`. Raw matches count cells or comments once even when both query groups match. At most 32 workbooks are scanned, each up to 32 MiB on disk with a cumulative XML decompression-read limit of 64 MiB per workbook. Limits produce `budget_exceeded` with partial candidates retained.
+- `metrics.xlsx_files_scanned` counts attempted files. Corrupt or unreadable workbooks produce `execution_error`, not a misleading zero-hit result.
+- Traversal stays within authorized root/path, does not follow symlinks, and skips dot-prefixed subdirectories, vendor, node_modules, and `~$` lock files. This native mode does not read `.gitignore`; restrict scope with `--path`. ZIP parts are never extracted to disk, external links are never fetched, and workbooks are never modified.
+- Legacy `.xls`, encrypted workbooks, and screenshot rendering are unsupported. Zero hits do not prove absence of a field or explanation.
+
+### Evidence first, understanding next
+
+codefind does not prebuild a graph or vector index. It searches current on-disk text, leaving scope, candidate selection, and output budgets to the tool, and business understanding and further exploration to the agent. Use a search → read → search-again loop; the two-rg limit applies to one request, not the entire investigation.
+
+For example, search documentation for a gameplay name, read the result to confirm a configuration ID, then query that ID inside authorized configuration directories. Shared matches are candidate evidence, not proven cross-file business relationships.
+
+### Search and candidate output
 
 - One process call and at most two internal `rg` calls: one for domain terms, one for candidate symbol/test names.
 - All patterns use `rg --fixed-strings`; they are never interpreted as regular expressions or shell code.
@@ -18,6 +68,8 @@ Its job is to narrow the reading surface—not to decide whether a feature exist
 - Go candidates may include bounded `go/ast` syntax evidence (`definition`, `call`, or `reference`) without claiming type-resolved edges.
 - Search paths must remain inside `--root`, including after symlink resolution.
 - No index, daemon, model call, or write to the searched repository.
+- File types take precedence over directory names, so Markdown notes and Go logic inside a proto directory are not mislabeled as protocols.
+- Among equal-length literal matches, numeric queries favor complete numbers (not adjacent to other digits) to reduce configuration-ID substring noise. This does not imply CSV field equality, and substring candidates remain eligible. Longer matches, group priority, and kind quotas still affect final ordering.
 
 ## Requirements
 
@@ -51,22 +103,44 @@ On Windows, use `codefind.exe` as the output filename.
 
 ## Usage
 
-Search an example Go repository for configuration-loading code:
+### Progressive readback after search
+
+Read one explicitly authorized workbook and worksheet after locating a match:
 
 ```sh
-codefind --root ./example-repo \
-  --path cmd --path internal --path docs \
-  --term "configuration" --term "load config" \
-  --symbol "LoadConfig" --symbol "TestLoadConfig"
+codefind read --root ./design/math --file common.xlsx --sheet common --range B6:AD20
+codefind read --root ./design/math --file common.xlsx --sheet common --anchor D20 --field "参数1" --field param1
+```
+
+Replace names and coordinates with actual search results. Supply exactly one of `--range` and `--anchor`.
+
+- Explicit ranges allow at most 4096 positions. `--max-cells` defaults to 96 returned cells (maximum 4096); `--max-chars` defaults to 24000 (maximum 200000) for returned source text, excluding JSON/coordinate overhead. Empty positions are not individually emitted.
+- Anchor mode defaults to `--strategy adaptive`, with repeatable `--field` aliases. Structure selection finds equal row keys within the first 64 columns, then searches up to 32 rows above columns to their right for matching headers. If no field column is found, it falls back to the row plus the first 12 header rows. Multiple candidates remain unresolved.
+- Explicit alternatives are `structure`, `row_headers`, and `window` (two rows above/below and four columns left/right). No strategy automatically expands authorization or crosses sheets.
+- When upward selection finds no field, adaptive first checks the next 8 rows within the first 64 columns for field headers. It returns 9 rows starting at each candidate header in that column, plus row labels in the anchor column and its two right neighbors. It reports below_headers with reason no_field_columns_above; only when no lower header exists does it fall back to row_headers. Multiple candidates remain unresolved, and proximity does not establish a business relationship. Adaptive retained scope extends up to 16 rows below the anchor, within the same output and reading budgets.
+- `codefind-read-v1` returns cells, field_candidates, merged_ranges, actual strategy, fallback_reason, and coverage. Cells distinguish value, formula, cached_value, and comment. Shared-formula attributes are preserved, not expanded. Values are not formatted or recalculated.
+- `read_complete` means selected-scope parsing/output was not budget-truncated, not that a question was answered. `budget_exceeded` means incomplete reading/output. Errors retain invalid_request/exit 2 and execution_error/exit 1; result statuses, including budget exhaustion, exit 0.
+- Timeout defaults to 2s (maximum 10s). Workbook/XML limits remain 32/64 MiB, with at most 100000 cell/comment events and 4096 merge regions scanned. Reading may parse the entire target worksheet and shared strings; coverage.ranges describes retained candidate coordinates, not disk I/O ranges.
+- Merge coordinates are preserved. If the top-left value is outside retained scope, expand the range explicitly. Cropped text is marked text_truncated. Direct cell comments are not conflated with nearby explanatory text.
+
+Use search → structural readback → explicit range expansion → other-sheet/document search as needed. The agent decides whether evidence is sufficient; the tool does not automatically complete the investigation.
+
+Locate arena reward clues in an example game project (replace directories and patterns with ones that exist in your project):
+
+```sh
+codefind --root ./game-project \
+  --path internal --path proto --path config --path docs \
+  --term "arena_reward" --term "100126" \
+  --symbol "ClaimArenaReward" --symbol "TestClaimArenaReward"
 ```
 
 PowerShell:
 
 ```powershell
-codefind --root .\example-repo `
-  --path cmd --path internal --path docs `
-  --term configuration --term "load config" `
-  --symbol LoadConfig --symbol TestLoadConfig
+codefind --root .\game-project `
+  --path internal --path proto --path config --path docs `
+  --term arena_reward --term "100126" `
+  --symbol ClaimArenaReward --symbol TestClaimArenaReward
 ```
 
 Provide at least one `--term` or `--symbol`. Repeat either flag to send multiple literal patterns.
@@ -75,21 +149,33 @@ Provide at least one `--term` or `--symbol`. Repeat either flag to send multiple
 
 | Option | Meaning | Default / limit |
 | --- | --- | --- |
-| `--root` | Repository root to search; required | none |
+| `--root` | Search root; need not be a Git repository; required | none |
 | `--path` | Relative directory inside `root`; repeatable | `.` |
 | `--term` | Domain term, action phrase, or historical alias; repeatable | at least one term or symbol |
 | `--symbol` | Candidate symbol or test name; repeatable | at least one term or symbol |
 | `--max-anchors` | Maximum projected anchors | 12 / maximum 50 |
 | `--max-matches` | Maximum raw matches read from `rg` | 2000 / maximum 10000 |
 | `--timeout` | Total search timeout | 2s / maximum 10s |
+| `--encoding` | File encoding for this request: `auto`, `utf-8`, `gbk`, `gb18030` | `auto` |
+| `--format` | Search mode: `text` or `xlsx` | `text` |
 | `--version` | Print the version and exit | - |
 
 ## JSON contract
 
+### Configuration table encoding
+
+The default `auto` preserves rg's encoding behavior (including BOM detection); it does not guess GBK or retry with another encoding after zero hits. For GBK gameplay tables, specify:
+
+```sh
+codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
+```
+
+Encoding applies to every search path in the request. Search UTF-8 source and GBK tables separately. Query patterns and JSON output remain Unicode / UTF-8; target files are never transcoded on disk or modified. Go AST parsing still follows Go source rules; non-UTF-8 Go files that fail parsing remain lexical candidates. `query.encoding` records the normalized selected option, not a detected encoding for each file.
+
 Every valid request writes one line of `codefind-result-v1` JSON to stdout:
 
 ```json
-{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.1.0","status":"candidates_found","query":{"terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"],"syntax":{"role":"definition","symbol":"LoadConfig","authority":"go_ast_syntax"}}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false,"syntax_files_parsed":1,"syntax_anchors":1,"syntax_parse_errors":0,"syntax_files_skipped":0},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
+{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.2.0-rc.1","status":"candidates_found","query":{"format":"text","encoding":"auto","terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"],"syntax":{"role":"definition","symbol":"LoadConfig","authority":"go_ast_syntax"}}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false,"syntax_files_parsed":1,"syntax_anchors":1,"syntax_parse_errors":0,"syntax_files_skipped":0},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
 ```
 
 ### Result fields
@@ -98,6 +184,7 @@ Every valid request writes one line of `codefind-result-v1` JSON to stdout:
 - `engine` / `version`: producer identity and CLI version.
 - `status`: machine-readable result state.
 - `query`: normalized, de-duplicated terms, symbols, and search paths actually used.
+- `query.encoding`: selected file encoding option, defaulting to `auto`.
 - `anchors`: bounded candidate locations. `path` is always relative to `root`. Optional `syntax` is syntax-only evidence from `go/ast`, never a type-resolved relation.
 - `unknowns`: questions the current result cannot answer; never treat them as negative conclusions.
 - `metrics`: calls, elapsed time, raw matches, projected anchors, truncation, and bounded Go syntax parsing counts. `first_anchor_ms` is `null` when no anchor was observed.
@@ -127,7 +214,7 @@ The human-readable `text` and `unknowns` values may change. Branch on `schema_ve
 | `docs` | Markdown documentation |
 | `generated` | Recognized generated Go files |
 
-An invalid request writes `codefind-error-v1` with status `invalid_request` and exits with code 2. JSON-output failures exit with code 1. All result statuses exit with code 0, so callers must inspect `status`.
+An invalid request, including malformed flags or unexpected positional arguments, writes `codefind-error-v1` with status `invalid_request` and exits with code 2. Search execution failures write the same error schema with status `execution_error` and exit with code 1. JSON-output failures exit with code 1. All result statuses exit with code 0, so callers must inspect `status`. Help and version requests produce plain text.
 
 ## Budget semantics
 
@@ -137,12 +224,17 @@ Budgets are part of the result contract:
 - `--max-matches` limits raw matches read from `rg`; `--max-anchors` limits the projected response.
 - Reaching the time or raw-match limit returns `budget_exceeded`.
 - Projection and de-duplication may reduce the response without exhausting a budget.
+- Symbols are searched before terms using a shared match budget; terms may be skipped if symbols exhaust that budget.
+- `metrics.truncated` indicates an exhausted budget or omitted unique anchors; duplicate matches alone do not set it.
+- `rg` runs with `--no-config`, ignoring `RIPGREP_CONFIG_PATH` so user configuration cannot change the search contract.
 - Go syntax enrichment shares the request timeout and only parses lexical shortlist files, at most 64 files and 1 MiB per file. Parse failures remain lexical-only and increment metrics.
 - `no_candidates` only means the current query produced no anchors. It must never be converted into “not implemented” or “does not exist.”
 
 ## Default search scope
 
-`codefind` searches Go, Protocol Buffers, Markdown, CSV, and YAML files. It excludes `.git`, `vendor`, `node_modules`, and minified JavaScript by default. It never expands beyond the directories supplied through `--path`.
+`text` mode searches Go, Protocol Buffers, Markdown, CSV, and YAML files. It excludes `.git`, `vendor`, `node_modules`, and minified JavaScript by default. See above for `xlsx` traversal rules. Neither mode expands beyond the directories supplied through `--path`.
+
+Each request accepts one `--root`. Multiple repositories or ordinary directories under the same authorized root can be searched through repeated `--path` flags; arbitrary separate roots are not supported in one request. Applicable ripgrep ignore rules, including `.gitignore`, still apply, so not every file under the root is necessarily searched.
 
 ## Security model
 
@@ -165,6 +257,14 @@ The following are deliberately outside `codefind` v0.1.x:
 - Editing, generating, or repairing files in the searched repository
 
 ## Development
+
+Game regression scenarios cover source, protocols, CSV / YAML, documentation, generated code, numeric-ID ranking, and scoped follow-up queries in non-Git directories:
+
+```sh
+go test ./internal/find -run TestGame -count=1 -v
+```
+
+These are synthetic regression fixtures, not retrieval-quality benchmarks on a real game project or evidence of superiority over raw rg, graphs, or vector retrieval.
 
 ```sh
 go fmt ./...

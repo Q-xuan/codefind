@@ -5,11 +5,61 @@
 
 [English](README.md) | 简体中文
 
-`codefind` 是一个面向 AI Coding Agent 的有预算代码发现 CLI。它把领域词和候选符号拆成至多两次受限的 [`rg`](https://github.com/BurntSushi/ripgrep) 字面量搜索，并返回少量、可继续回读的源码锚点。
+本地预发布版本：**0.2.0-rc.1**。兼容性见 [JSON 契约](docs/json-contract.md)，发布状态见 [检查清单](RELEASE_CHECKLIST.md)。下方公开安装命令使用已发布 revision，不保证已经包含本地候选版本。
+
+`codefind` 是一个面向游戏项目、供 AI Coding Agent 使用的有预算业务线索发现 CLI。它跨 Go 源码、Proto 协议、CSV / YAML 配置和 Markdown 文档搜索玩法名称、配置 ID、历史别名及候选符号，不依赖代码建图。
+
+文本模式使用至多两次受限的 [`rg`](https://github.com/BurntSushi/ripgrep) 字面量搜索；XLSX 模式原生读取工作簿。两者均返回少量可继续回读的位置证据，帮助 Agent 缩小阅读范围。
 
 它的职责是缩小后续阅读范围，而不是判断功能是否存在。`codefind` 不是 Code Graph，也不建立语义边。
 
+## 为什么面向游戏项目
+
+一个玩法的实现线索可能分散在服务端逻辑、网络协议、数值表、功能开关和设计文档中，而不只存在于函数调用关系里。
+
+- **跨内容类型定位**：用玩法名、协议名或配置 ID，在源码、协议、配置和文档中寻找字面量命中的候选。
+- **不要求属于代码包或 Git 仓库**：普通目录中的受支持文本文件也可以搜索，无需编译或建立索引。
+- **直接读取当前落盘内容**：适合 Agent 在修改玩法逻辑前，先定位实现、测试和数据线索。
+- **保留证据边界**：共同命中不证明业务关联，零命中不证明功能不存在；候选仍需回读确认。
+
+当前更适合以 Go 为主要逻辑语言、配合 Proto 和 CSV / YAML 的游戏项目；并不覆盖所有游戏引擎语言或二进制资产，也不替代类型感知的调用图和影响分析。
+
 ## 核心特点
+
+### XLSX 策划工作簿
+
+使用独立的只读模式搜索 Excel 单元格存储值（包括公式缓存值）和传统批注：
+
+```sh
+codefind --root ./design/math --format xlsx --term Pvp --term "挑战券" --timeout 10s
+```
+
+此模式不调用 rg，不要求安装 Excel，不建立索引。命中返回 `kind: config`、工作簿相对 `path`、`text`、`groups` 和 `workbook: {sheet, cell, source}`；`source` 为 `cell` 或 `comment`，不提供源码 `line`。同一位置的单元格和批注可分别命中；没有批注命中不表示没有批注。`query.format` 区分 `text` / `xlsx`。
+
+不知道内容在哪个文件时，直接搜索目录即可。工具先读取受限的工作表名称元数据，按文件名和工作表名与查询词的匹配程度排序；名称匹配忽略大小写，仅用于排序，正文仍按大小写敏感的字面量搜索。没有名称线索时先扫描较小工作簿，不猜测玩法别名、不排除名称不匹配的文件。工作簿内部也优先扫描名称匹配的工作表。
+
+输出候选采用两层轮询：在已命中的工作簿之间分配名额，每个工作簿内部再轮询已命中的工作表；同表内部保留原有相关性顺序。这样可减少单表重复命中挤占结果，但不保证所有表都能进入很小的输出预算。此策略只筛选已扫描到的候选，不增加扫描范围或预算；为保持来源多样性，跨表结果不保证严格按符号优先级排列。
+
+`workbook_coverage.files` 按扫描顺序列出已发现文件：`complete` 表示支持的内容已扫描完成，`partial` 表示未完成，`pending` 表示尚未开始。`reason` 区分 `file_timeout`、`total_timeout`、`match_limit`、`file_size_or_xml_limit`；`metadata_status` 单独报告名称元数据是否读取成功。`discovery_complete: false` 表示文件枚举本身受限，列表不是全部文件。这里的 complete 不代表 OCR、公式或业务理解已完成。
+
+元数据阶段最多使用总超时的 20%，每个工作簿元数据最多 50ms、XML 读取最多 1 MiB；读取失败只回退到文件名/大小排序，不丢弃候选。内容扫描单文件时间上限为总 timeout 除以 `min(发现文件数, 4)`，仍受剩余总时间约束。单文件时间或大小预算耗尽后继续其他文件；全局时间或匹配预算耗尽后停止。只要存在未完成扫描，就返回 `budget_exceeded`，即使已有命中或总时间尚有剩余。当前不提供断点续扫，重试会重新读取。
+
+边界与预算：
+
+- 默认仍为 `--format text`；两种模式分次查询，XLSX 不接受非 auto 的 `--encoding`。
+- XLSX 使用大小写敏感的字面量匹配；不搜索工作表名、图片、截图、线程评论或公式表达式，不重算公式，也不解释字段。缓存值可能过期，数字/日期格式不渲染，合并单元格只定位实际存储值的单元格。
+- 共享 `--timeout`、`--max-matches`、`--max-anchors`；原始匹配按单元格或批注计数，重复查询组不重复计数。最多扫描 32 个工作簿，单文件不超过 32 MiB，每个工作簿累计 XML 解压读取上限 64 MiB。超过任一预算返回 `budget_exceeded`，已找到的候选仍保留。
+- `metrics.xlsx_files_scanned` 记录尝试扫描的文件数；损坏或不可读工作簿返回 `execution_error`，不会伪装成零命中。
+- 只遍历明确授权的 root/path；不跟随符号链接，跳过点号子目录、vendor、node_modules 和 `~$` 锁文件。此原生模式不读取 `.gitignore`，请使用 `--path` 限定范围；不提取 ZIP 到磁盘、不访问工作簿外部链接、不修改原表。
+- 旧 `.xls`、加密工作簿和截图渲染不支持。零命中不证明字段或说明不存在。
+
+### 先取证，再理解
+
+codefind 不预先建图或建立向量索引：它直接搜索当前落盘文本，把查询范围、候选筛选和输出预算交给工具，把业务理解和下一步探索留给 Agent。建议采用“搜索 → 回读 → 根据新线索再次搜索”的循环；最多两次 rg 是单次请求的限制，不代表整个调查已完成。
+
+例如，先在文档里搜索玩法名，回读确认配置 ID，再在已授权的配置目录里查询该 ID。共同命中只是候选证据，不代表工具已经证明跨文件业务关系。
+
+### 搜索与候选输出
 
 - 单次进程调用，内部最多执行两次 `rg`：一组搜索领域词，一组搜索候选 symbol/test 名称。
 - 所有模式均通过 `rg --fixed-strings` 按字面量处理，不解释为正则表达式或 shell 代码。
@@ -18,6 +68,8 @@
 - Go 候选可以携带受限的 `go/ast` 语法证据（`definition`、`call`、`reference`），但不会冒充类型解析后的关系边。
 - 搜索目录必须位于 `--root` 内，解析 symlink 后仍禁止越界。
 - 不建立索引、不启动 daemon、不调用模型，也不写入被搜索的仓库。
+- 文件类型优先于目录名分类，避免把 proto 目录里的 Markdown 文档或 Go 逻辑误当成协议。
+- 同长度字面量的排序中，纯数字查询优先完整数字命中（数字两侧不是其他数字），减少配置 ID 的子串噪声；不保证 CSV 字段相等，子串候选仍保留。较长匹配、分组优先级和分类配额仍会影响最终顺序。
 
 ## 依赖
 
@@ -51,22 +103,44 @@ Windows 请把输出文件名改为 `codefind.exe`。
 
 ## 使用
 
-在示例 Go 仓库中搜索配置加载逻辑：
+### 搜索之后渐进式回读
+
+找到 XLSX 位置后，使用 `read` 子命令，只读取明确授权的单工作簿和工作表：
 
 ```sh
-codefind --root ./example-repo \
-  --path cmd --path internal --path docs \
-  --term "configuration" --term "load config" \
-  --symbol "LoadConfig" --symbol "TestLoadConfig"
+codefind read --root ./design/math --file common.xlsx --sheet common --range B6:AD20
+codefind read --root ./design/math --file common.xlsx --sheet common --anchor D20 --field "参数1" --field param1
+```
+
+文件名、工作表和坐标均需替换为实际命中位置。`--range` 与 `--anchor` 二选一。
+
+- 显式 range 最多 4096 格；`--max-cells` 默认返回 96 格、上限 4096；`--max-chars` 默认 24000、上限 200000，限制返回的原始文本字符，不包含 JSON/坐标开销。空格子不逐一返回。
+- anchor 默认 `--strategy adaptive`，需要 `--field` 指定目标字段及可重复别名。结构策略在前 64 列寻找同行相同键，在键右侧向上最多 32 行匹配字段表头；未找到字段列时回退同行＋前 12 行表头。不是自动字段解释，多个字段候选全部保留。
+- 可显式使用 `structure`、`row_headers` 或 `window`；window 为命中格上下 2 行、左右 4 列。策略都不自动跨工作表或扩大授权范围。
+- adaptive 向上未找到字段时，先在命中格下方 8 行、前 64 列寻找字段表头；命中后回读该列自表头起的 9 行，并带上命中格所在列及右侧两列的同行标签。实际策略报告 below_headers，原因 no_field_columns_above；下方仍无字段才回退 row_headers。多列候选全部保留，此规则不证明标题与附近表格的业务关联。为此 adaptive 保留的候选范围最多延伸至命中格下方 16 行，仍受输出与总读取预算约束。
+- 结果结构为 `codefind-read-v1`，包含 cells、field_candidates、merged_ranges、实际 strategy、fallback_reason 和 coverage。单元格分别保留 value、formula、cached_value、comment；共享公式保留原始属性，不重建表达式，不渲染数字格式、不重算。
+- `read_complete` 仅说明选定范围解析及输出未被预算截断，不表示问题已回答；`budget_exceeded` 表示读取或输出未完成。错误沿用 JSON invalid_request/退出码2、execution_error/退出码1，成功结果（含预算耗尽）退出码0。
+- 超时默认 2s、上限 10s；沿用工作簿 32 MiB、XML 64 MiB 限制，最多扫描 100000 个单元格/批注事件和 4096 个合并区域。底层可能需要解析整个目标工作表及共享字符串，不承诺按范围随机读取 ZIP。coverage.ranges 是保留候选的坐标范围，不是磁盘读取范围。
+- 合并区域保留坐标；左上角在保留范围外时提示扩大范围，不擅自补读。文本裁剪用 text_truncated 标记；批注属于 cell，不与别处的备注文字混为一谈。
+
+建议流程：搜索定位 → 结构回读 → 必要时显式扩大范围 → 仍不足再查其他表/文档。说明是否足够由 Agent 判断，工具不自动跑完整调查。
+
+在示例游戏项目中定位竞技场奖励相关线索（请将目录和查询词替换为项目中实际存在的内容）：
+
+```sh
+codefind --root ./game-project \
+  --path internal --path proto --path config --path docs \
+  --term "arena_reward" --term "100126" \
+  --symbol "ClaimArenaReward" --symbol "TestClaimArenaReward"
 ```
 
 PowerShell：
 
 ```powershell
-codefind --root .\example-repo `
-  --path cmd --path internal --path docs `
-  --term configuration --term "load config" `
-  --symbol LoadConfig --symbol TestLoadConfig
+codefind --root .\game-project `
+  --path internal --path proto --path config --path docs `
+  --term arena_reward --term "100126" `
+  --symbol ClaimArenaReward --symbol TestClaimArenaReward
 ```
 
 必须至少提供一个 `--term` 或 `--symbol`。两个参数都可以重复，用于传入多个字面量模式。
@@ -75,21 +149,33 @@ codefind --root .\example-repo `
 
 | 参数 | 含义 | 默认值 / 上限 |
 | --- | --- | --- |
-| `--root` | 要搜索的仓库根目录，必填 | 无 |
+| `--root` | 要搜索的根目录，不要求是 Git 仓库，必填 | 无 |
 | `--path` | `root` 内的相对目录，可重复 | `.` |
 | `--term` | 领域词、动作词或历史别名，可重复 | 与 `--symbol` 至少提供一项 |
 | `--symbol` | 候选 symbol 或测试名，可重复 | 与 `--term` 至少提供一项 |
 | `--max-anchors` | 最多输出多少个投影锚点 | 12 / 最高 50 |
 | `--max-matches` | 最多读取多少条 `rg` 原始匹配 | 2000 / 最高 10000 |
 | `--timeout` | 整次搜索的总超时 | 2s / 最高 10s |
+| `--encoding` | 本次搜索的文件编码：`auto`、`utf-8`、`gbk`、`gb18030` | `auto` |
+| `--format` | 搜索模式：`text` 或 `xlsx` | `text` |
 | `--version` | 输出版本后退出 | - |
 
 ## JSON Contract
 
+### 配置表编码
+
+默认 `auto` 沿用 rg 的编码行为（含 BOM 检测），不自动猜测 GBK，也不会在零命中后更换编码重试。GBK 策划表可显式指定：
+
+```sh
+codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
+```
+
+编码作用于本次请求的所有搜索目录；UTF-8 源码与 GBK 配置表应分次查询。查询词及 JSON 输出仍使用 Unicode / UTF-8，目标文件不会被转码或修改。Go AST 仍按 Go 源文件规则解析，非 UTF-8 Go 文件解析失败时保持纯文本候选。结果的 `query.encoding` 记录规范化后的所选编码，而不是对每个文件编码的检测结论。
+
 每个合法请求都会向 stdout 输出一行 `codefind-result-v1` JSON：
 
 ```json
-{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.1.0","status":"candidates_found","query":{"terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"],"syntax":{"role":"definition","symbol":"LoadConfig","authority":"go_ast_syntax"}}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false,"syntax_files_parsed":1,"syntax_anchors":1,"syntax_parse_errors":0,"syntax_files_skipped":0},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
+{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.2.0-rc.1","status":"candidates_found","query":{"format":"text","encoding":"auto","terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"],"syntax":{"role":"definition","symbol":"LoadConfig","authority":"go_ast_syntax"}}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false,"syntax_files_parsed":1,"syntax_anchors":1,"syntax_parse_errors":0,"syntax_files_skipped":0},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
 ```
 
 ### 结果字段
@@ -98,6 +184,7 @@ codefind --root .\example-repo `
 - `engine` / `version`：输出工具和 CLI 版本。
 - `status`：机器可判定的结果状态。
 - `query`：清理、去重后实际使用的词、符号和搜索目录。
+- `query.encoding`：本次采用的文件编码选项，默认 `auto`。
 - `anchors`：预算内的候选位置；`path` 始终相对 `root`。可选 `syntax` 是 `go/ast` 提供的语法级证据，不是类型解析关系。
 - `unknowns`：当前结果不能回答的事项，绝不能解释为否定结论。
 - `metrics`：调用次数、耗时、原始匹配、投影锚点、截断状态和受限 Go 语法解析计数。没有观察到锚点时，`first_anchor_ms` 为 `null`。
@@ -127,7 +214,7 @@ codefind --root .\example-repo `
 | `docs` | Markdown 文档 |
 | `generated` | 可识别的 Go 生成文件 |
 
-无效请求输出 `codefind-error-v1`，状态为 `invalid_request`，进程退出码为 2。JSON 输出失败时退出码为 1。其他结果状态的退出码均为 0，所以调用方必须读取 `status`。
+无效请求（包括参数格式错误和多余的位置参数）输出 `codefind-error-v1`，状态为 `invalid_request`，进程退出码为 2。搜索执行失败使用同一错误结构，状态为 `execution_error`，退出码为 1。JSON 输出失败时退出码为 1。其他结果状态的退出码均为 0，所以调用方必须读取 `status`。帮助和版本请求输出纯文本。
 
 ## 预算语义
 
@@ -137,12 +224,17 @@ codefind --root .\example-repo `
 - `--max-matches` 限制从 `rg` 读取的原始匹配；`--max-anchors` 限制投影后的响应数量。
 - 达到时间或原始匹配预算时返回 `budget_exceeded`。
 - 投影和去重可能缩小输出，但这本身不表示预算耗尽。
+- 优先搜索 symbols，再使用剩余的共享匹配预算搜索 terms；symbols 耗尽预算时可能跳过 terms。
+- `metrics.truncated` 表示预算耗尽或有去重后的候选未输出；重复匹配本身不会触发此标记。
+- `rg` 使用 `--no-config`，忽略 `RIPGREP_CONFIG_PATH`，避免用户配置改变搜索约定。
 - Go 语法增强与搜索共用本次请求 timeout，只解析 lexical shortlist，最多 64 个文件且单文件不超过 1 MiB；解析失败保持 lexical-only，并通过 metrics 计数。
 - `no_candidates` 只表示当前查询没有产生锚点，永远不能转换成“未实现”或“不存在”。
 
 ## 默认搜索范围
 
-`codefind` 搜索 Go、Protocol Buffers、Markdown、CSV 和 YAML 文件，默认排除 `.git`、`vendor`、`node_modules` 与 minified JavaScript。它不会自动扩大调用方通过 `--path` 提供的目录范围。
+`text` 模式搜索 Go、Protocol Buffers、Markdown、CSV 和 YAML 文件，默认排除 `.git`、`vendor`、`node_modules` 与 minified JavaScript。`xlsx` 模式的范围规则见上文。它不会自动扩大调用方通过 `--path` 提供的目录范围。
+
+每次请求只接受一个 `--root`。多个仓库或普通目录位于同一授权根目录下时，可以通过多个 `--path` 搜索；不支持一次指定任意分散的多个根目录。搜索仍遵循适用的 `.gitignore` 等 ripgrep 忽略规则，不保证枚举根目录下的所有文件。
 
 ## 安全边界
 
@@ -165,6 +257,14 @@ codefind --root .\example-repo `
 - 编辑、生成或修复目标仓库中的文件
 
 ## 开发与验证
+
+游戏场景回归覆盖源码、协议、CSV / YAML、文档、生成代码、数字 ID 排序，以及非 Git 目录下分两次查询的范围约束：
+
+```sh
+go test ./internal/find -run TestGame -count=1 -v
+```
+
+这些是合成场景回归，不是实际游戏项目的检索质量评测，也不能据此声称优于原生 rg、Graph 或向量检索。
 
 ```sh
 go fmt ./...
