@@ -3,3 +3,5 @@
 /codefind.exe
 *.test
 *.prof
+**/__pycache__/
+/bench/results/v2/

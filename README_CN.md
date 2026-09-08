@@ -7,6 +7,8 @@
 
 本地预发布版本：**0.2.0-rc.1**。兼容性见 [JSON 契约](docs/json-contract.md)，发布状态见 [检查清单](RELEASE_CHECKLIST.md)。下方公开安装命令使用已发布 revision，不保证已经包含本地候选版本。
 
+未发布改进：只有一个 XLSX 候选时跳过文件间排序的额外元数据读取，coverage 的 metadata_status 为 not_needed；正文仍按工作表名排序。Go 范围零命中会提示显式选择 --lang，不额外扫描。
+
 `codefind` 是一个面向游戏项目、供 AI Coding Agent 使用的有预算业务线索发现 CLI。它跨 Go 源码、Proto 协议、CSV / YAML 配置和 Markdown 文档搜索玩法名称、配置 ID、历史别名及候选符号，不依赖代码建图。
 
 文本模式使用至多两次受限的 [`rg`](https://github.com/BurntSushi/ripgrep) 字面量搜索；XLSX 模式原生读取工作簿。两者均返回少量可继续回读的位置证据，帮助 Agent 缩小阅读范围。

@@ -13,30 +13,21 @@ import subprocess
 import time
 from collections import Counter
 from pathlib import Path
+from bench_common import resolve_binary, match_rows, count_matches, redact, environment
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]  # bench/scripts -> repo root
 ROOT = Path(os.environ.get("CODEFIND_BENCH_ROOT", str(SCRIPT_DIR.parent)))  # bench/
 FIXTURE = ROOT / "fixtures" / "multilang_game"
-RESULTS = ROOT / "results"
+RESULTS = Path(os.environ.get("BENCH_RESULTS_DIR", str(ROOT / "results" / "v2")))
+MAX_ANCHORS = int(os.environ.get("BENCH_MAX_ANCHORS", "12"))
 RUNS = int(os.environ.get("BENCH_RUNS", "3"))
 TIMEOUT_S = os.environ.get("BENCH_TIMEOUT", "10")
 
 
 def resolve_codefind_bin() -> Path:
-    """Prefer CODEFIND_BIN, else repo-root ./codefind, else PATH."""
-    if "CODEFIND_BIN" in os.environ:
-        return Path(os.environ["CODEFIND_BIN"])
-    candidate = REPO_ROOT / "codefind"
-    if candidate.is_file():
-        return candidate
-    import shutil as _shutil
-
-    which = _shutil.which("codefind")
-    if which:
-        return Path(which)
-    return candidate
+    return resolve_binary(REPO_ROOT)
 
 
 CODEFIND = resolve_codefind_bin()
@@ -50,7 +41,7 @@ def rel_display(path: Path) -> str:
         try:
             return str(path.resolve().relative_to(ROOT.resolve().parent))
         except ValueError:
-            return str(path)
+            return "<external>/" + path.name
 
 # Globs mirroring codefind searchGlobs for go+domain (default) and selected langs.
 DOMAIN_GLOBS = [
@@ -167,24 +158,19 @@ def run_cmd(argv: list[str], *, timeout: float = 60.0) -> tuple[int, str, str, i
         out = (e.stdout or b"").decode("utf-8", errors="replace")
         err = (e.stderr or b"").decode("utf-8", errors="replace")
         ec = 124
-    ms = int((time.perf_counter() - t0) * 1000)
+    ms = round((time.perf_counter() - t0) * 1000, 3)
     return ec, out, err, ms
 
 
 def median_ms(values: list[int]) -> int:
-    return int(statistics.median(values)) if values else 0
+    return round(statistics.median(values), 3) if values else 0
 
 
 def analyze_rg(out: str, exit_code: int) -> dict[str, Any]:
-    lines = [ln for ln in out.splitlines() if ln.strip()]
-    # rg path:line:text — count non-empty match lines
-    hit_count = 0
-    paths: list[str] = []
-    for ln in lines:
-        # skip empty
-        if ":" in ln:
-            hit_count += 1
-            paths.append(ln.split(":", 1)[0])
+    rows = match_rows(out, exit_code)
+    lines = [f"{p}:{n}:{text}" for p, n, text in rows]
+    paths = [p for p, _, _ in rows]
+    hit_count = len(rows)
     # noise: hits under excluded dirs / min.js (naive search)
     noise = 0
     for p in paths:
@@ -209,7 +195,7 @@ def analyze_rg(out: str, exit_code: int) -> dict[str, Any]:
     }
 
 
-def analyze_codefind(output: str) -> dict[str, Any]:
+def analyze_codefind(output: str, exit_code: int | None = None) -> dict[str, Any]:
     try:
         data = json.loads(output)
     except json.JSONDecodeError:
@@ -279,13 +265,13 @@ def analyze_codefind(output: str) -> dict[str, Any]:
 
 def rg_argv(term: str, *, naive: bool, langs: list[str] | None) -> list[str]:
     # single rg -F with -n for path:line
-    base = ["rg", "-F", "-n", "--", term, str(FIXTURE)]
+    base = ["rg", "--no-config", "-F", "-n", "--", term, str(FIXTURE)]
     if naive:
         # broad: no lang discipline, maybe still skip .git lightly but include vendor noise
         # agent-naive: often just rg -F term .
-        return ["rg", "-F", "-n", "--", term, str(FIXTURE)]
+        return ["rg", "--no-config", "-F", "-n", "--", term, str(FIXTURE)]
     assert langs is not None
-    return ["rg", "-F", "-n", *lang_to_rg_globs(langs), "--", term, str(FIXTURE)]
+    return ["rg", "--no-config", "-F", "-n", *lang_to_rg_globs(langs), "--", term, str(FIXTURE)]
 
 
 def codefind_argv(q: dict[str, Any], langs: list[str] | None) -> list[str]:
@@ -300,7 +286,7 @@ def codefind_argv(q: dict[str, Any], langs: list[str] | None) -> list[str]:
         "--max-matches",
         "2000",
         "--max-anchors",
-        "50",
+                        str(MAX_ANCHORS),
     ]
     if q["mode"] == "symbol":
         argv.extend(["--symbol", q["value"]])
@@ -319,11 +305,8 @@ def timed_runs(label: str, argv: list[str], analyzer, query_id: str, polarity: s
     last_ec = 0
     for i in range(1, n + 1):
         ec, out, err, ms = run_cmd(argv)
-        payload = out if out.strip() else err
-        try:
-            ana = analyzer(payload, ec)
-        except TypeError:
-            ana = analyzer(payload)
+        payload = out  # stderr is diagnostic data, never a match
+        ana = analyzer(payload, ec)
         times.append(ms)
         last = ana
         last_ec = ec
@@ -336,6 +319,8 @@ def timed_runs(label: str, argv: list[str], analyzer, query_id: str, polarity: s
                 "wall_ms": ms,
                 "exit_code": ec,
                 "argv": argv,
+                "stdout_bytes": len(out.encode("utf-8")),
+                "stderr": err,
                 **{k: v for k, v in ana.items() if k != "error"},
                 **({"error": ana["error"]} if ana.get("error") else {}),
             }
@@ -555,6 +540,12 @@ def main() -> None:
     payload["codefind_version"] = version
     payload["git"] = {"sha": git_sha, "subject": git_subj}
 
+    safe_paths = [(CODEFIND, "<CODEFIND_BIN>"), (FIXTURE, "bench/fixtures/multilang_game"), (REPO_ROOT, "<REPO>"), (ROOT, "bench")]
+    payload["environment"] = environment(CODEFIND)
+    payload["max_anchors"] = MAX_ANCHORS
+    payload = redact(payload, safe_paths)
+    all_runs = redact(all_runs, safe_paths)
+    medians = redact(medians, safe_paths)
     json_path = RESULTS / "lang_latest.json"
     with json_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)

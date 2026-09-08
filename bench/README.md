@@ -12,6 +12,18 @@
 
 ## 环境变量（可选）
 
+修订脚本默认写入 `bench/results/v2/`（Git 忽略），不覆盖历史基线。`BENCH_RESULTS_DIR` 可指定独立输出目录，`BENCH_MAX_ANCHORS` 默认 12（可设 50 复现旧口径）。Windows 可直接通过 `CODEFIND_BIN` 指向 exe，或在仓库根构建 codefind.exe。
+
+```sh
+python -m unittest discover -s bench/scripts -p test_bench.py
+python bench/scripts/bench_xlsx_readback.py
+python bench/scripts/compare_xlsx.py --before /path/to/before --after /path/to/after --runs 10
+```
+
+v2 修复 Windows 路径、单文件计数、stderr 被当作命中和原始 argv 路径泄露；统一 rg --no-config，保留小数毫秒，并记录 OS/架构/Python/rg 版本及 binary SHA-256。工作树 Git SHA 不是任意外部二进制的构建凭证。
+
+XLSX 的解压准备耗时单独记录，rg_unzip 仍是“已解压输入”的搜索计时，不包含坐标重建。xml_format_lines 只描述 XML 序列化，不能当相关性噪声率。readback 脚本使用独立 XML oracle 校验默认12项坐标，并从返回位置调用 read，报告覆盖、输出字节、总进程耗时和源码哈希不变；不验证业务含义，功能单次结果不作为性能基准。
+
 | 变量 | 含义 | 默认 |
 |---|---|---|
 | `CODEFIND_BIN` | codefind 可执行文件路径 | 仓库根 `./codefind`，否则 `PATH` 上的 `codefind` |

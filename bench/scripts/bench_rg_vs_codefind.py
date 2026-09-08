@@ -13,28 +13,21 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
+from bench_common import resolve_binary, match_rows, count_matches, redact, environment
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]  # bench/scripts -> repo root
 ROOT = Path(os.environ.get("CODEFIND_BENCH_ROOT", str(SCRIPT_DIR.parent)))  # bench/
 FIXTURE_DIR = ROOT / "fixtures" / "game_tables"
 XLSX = FIXTURE_DIR / "survivor_game_tables.xlsx"
-RESULTS = ROOT / "results"
+RESULTS = Path(os.environ.get("BENCH_RESULTS_DIR", str(ROOT / "results" / "v2")))
+MAX_ANCHORS = int(os.environ.get("BENCH_MAX_ANCHORS", "12"))
 RUNS = int(os.environ.get("BENCH_RUNS", "3"))
 TIMEOUT_S = os.environ.get("BENCH_TIMEOUT", "10")
 
 
 def resolve_codefind_bin() -> Path:
-    """Prefer CODEFIND_BIN, else repo-root ./codefind, else PATH."""
-    if "CODEFIND_BIN" in os.environ:
-        return Path(os.environ["CODEFIND_BIN"])
-    candidate = REPO_ROOT / "codefind"
-    if candidate.is_file():
-        return candidate
-    which = shutil.which("codefind")
-    if which:
-        return Path(which)
-    return candidate
+    return resolve_binary(REPO_ROOT)
 
 
 CODEFIND = resolve_codefind_bin()
@@ -48,7 +41,7 @@ def rel_display(path: Path) -> str:
         try:
             return str(path.resolve().relative_to(ROOT.resolve().parent))
         except ValueError:
-            return str(path)
+            return "<external>/" + path.name
 
 QUERIES = [
     ("勇士匕首", "pos"),
@@ -79,29 +72,21 @@ def run_cmd(argv: list[str], *, timeout: float = 60.0) -> tuple[int, str, int]:
     except subprocess.TimeoutExpired as e:
         out = (e.stdout or b"").decode("utf-8", errors="replace")
         ec = 124
-    ms = int((time.perf_counter() - t0) * 1000)
+    ms = round((time.perf_counter() - t0) * 1000, 3)
     return ec, out, ms
 
 
 def rg_match_count(path: str, term: str) -> tuple[int, int, str]:
     """Return (match_count, exit_code, sample_output_for_noise). Timing done by caller separately."""
-    ec, out, _ = run_cmd(["rg", "-a", "-F", "--count-matches", "--", term, path])
-    total = 0
-    if out.strip():
-        for line in out.splitlines():
-            # path:count
-            if ":" in line:
-                try:
-                    total += int(line.rsplit(":", 1)[-1])
-                except ValueError:
-                    pass
+    ec, out, _ = run_cmd(["rg", "--no-config", "-a", "-F", "--count-matches", "--", term, path])
+    total = count_matches(out, ec)
     # sample lines for noise analysis (limit)
-    ec2, sample, _ = run_cmd(["rg", "-a", "-F", "-m", "20", "--", term, path])
+    ec2, sample, _ = run_cmd(["rg", "--no-config", "-a", "-F", "-m", "20", "--", term, path])
     return total, ec if out.strip() or ec in (0, 1) else ec, sample
 
 
 def analyze_rg_sample(sample: str, match_count: int, exit_code: int) -> dict:
-    lines = [ln for ln in sample.splitlines() if ln.strip()]
+    lines = [ln for ln in sample.splitlines() if ln.strip()] if exit_code in (0, 1) else []
     noise = 0
     for ln in lines:
         low = ln.lower()
@@ -138,7 +123,7 @@ def analyze_rg_sample(sample: str, match_count: int, exit_code: int) -> dict:
             break
     return {
         "hit_count": match_count,
-        "noise_lines": noise_lines,
+        "xml_format_lines": noise_lines,
         "has_sheet_cell": has_sheet_cell,
         "agent_json": 0,
         "status": "rg_match" if match_count else ("rg_no_match" if exit_code in (0, 1) else f"rg_ec_{exit_code}"),
@@ -153,7 +138,7 @@ def analyze_codefind(output: str) -> dict:
     except json.JSONDecodeError:
         return {
             "hit_count": 0,
-            "noise_lines": 0,
+            "xml_format_lines": 0,
             "has_sheet_cell": 0,
             "agent_json": 0,
             "status": "json_parse_error",
@@ -168,7 +153,7 @@ def analyze_codefind(output: str) -> dict:
     metrics = data.get("metrics") or {}
     return {
         "hit_count": len(anchors),
-        "noise_lines": 0,
+        "xml_format_lines": 0,
         "has_sheet_cell": 1 if anchors and coords == len(anchors) else (1 if coords else 0),
         "agent_json": 1,
         "status": data.get("status", ""),
@@ -179,7 +164,7 @@ def analyze_codefind(output: str) -> dict:
 
 
 def median_ms(values: list[int]) -> int:
-    return int(statistics.median(values))
+    return round(statistics.median(values), 3)
 
 
 def main() -> None:
@@ -192,9 +177,11 @@ def main() -> None:
 
     RESULTS.mkdir(parents=True, exist_ok=True)
     unzip_dir = Path(tempfile.mkdtemp(prefix="codefind-bench-unzip-"))
+    setup_started = time.perf_counter()
     try:
         with zipfile.ZipFile(XLSX, "r") as zf:
             zf.extractall(unzip_dir)
+        unzip_setup_ms = round((time.perf_counter() - setup_started) * 1000, 3)
 
         all_runs: list[dict] = []
         medians: list[dict] = []
@@ -208,8 +195,8 @@ def main() -> None:
             last_a: dict = {}
             for i in range(1, RUNS + 1):
                 t0 = time.perf_counter()
-                ec, out, _ = run_cmd(["rg", "-a", "-F", "--", term, str(XLSX)])
-                ms = int((time.perf_counter() - t0) * 1000)
+                ec, out, _ = run_cmd(["rg", "--no-config", "-a", "-F", "--", term, str(XLSX)])
+                ms = round((time.perf_counter() - t0) * 1000, 3)
                 # count matches (may be 0 on compressed binary)
                 count, ec_c, sample = rg_match_count(str(XLSX), term)
                 # Prefer timed command's empty output => 0 usable; count from --count-matches
@@ -226,6 +213,7 @@ def main() -> None:
                         "run": i,
                         "wall_ms": ms,
                         "exit_code": ec,
+                        "stdout_bytes": len(out.encode("utf-8")),
                         **{k: v for k, v in ana.items() if k != "sample_lines"},
                     }
                 )
@@ -234,7 +222,7 @@ def main() -> None:
                 "exit_code": all_runs[-1]["exit_code"],
                 **{
                     k: last_a[k]
-                    for k in ("hit_count", "noise_lines", "has_sheet_cell", "agent_json", "status", "raw_matches")
+                    for k in ("hit_count", "xml_format_lines", "has_sheet_cell", "agent_json", "status", "raw_matches")
                 },
             }
 
@@ -243,8 +231,8 @@ def main() -> None:
             last_b: dict = {}
             for i in range(1, RUNS + 1):
                 t0 = time.perf_counter()
-                ec, out, _ = run_cmd(["rg", "-a", "-F", "--", term, str(unzip_dir)])
-                ms = int((time.perf_counter() - t0) * 1000)
+                ec, out, _ = run_cmd(["rg", "--no-config", "-a", "-F", "--", term, str(unzip_dir)])
+                ms = round((time.perf_counter() - t0) * 1000, 3)
                 count, _, sample = rg_match_count(str(unzip_dir), term)
                 ana = analyze_rg_sample(sample if sample.strip() else out, count, ec)
                 times.append(ms)
@@ -257,6 +245,7 @@ def main() -> None:
                         "run": i,
                         "wall_ms": ms,
                         "exit_code": ec,
+                        "stdout_bytes": len(out.encode("utf-8")),
                         **{k: v for k, v in ana.items() if k != "sample_lines"},
                     }
                 )
@@ -265,7 +254,7 @@ def main() -> None:
                 "exit_code": all_runs[-1]["exit_code"],
                 **{
                     k: last_b[k]
-                    for k in ("hit_count", "noise_lines", "has_sheet_cell", "agent_json", "status", "raw_matches")
+                    for k in ("hit_count", "xml_format_lines", "has_sheet_cell", "agent_json", "status", "raw_matches")
                 },
             }
 
@@ -287,7 +276,7 @@ def main() -> None:
                         "--max-matches",
                         "2000",
                         "--max-anchors",
-                        "50",
+                        str(MAX_ANCHORS),
                     ]
                 )
                 ana = analyze_codefind(out)
@@ -301,11 +290,12 @@ def main() -> None:
                         "run": i,
                         "wall_ms": ms,
                         "exit_code": ec,
+                        "stdout_bytes": len(out.encode("utf-8")),
                         **{
                             k: ana[k]
                             for k in (
                                 "hit_count",
-                                "noise_lines",
+                                "xml_format_lines",
                                 "has_sheet_cell",
                                 "agent_json",
                                 "status",
@@ -321,7 +311,7 @@ def main() -> None:
                     k: last_c[k]
                     for k in (
                         "hit_count",
-                        "noise_lines",
+                        "xml_format_lines",
                         "has_sheet_cell",
                         "agent_json",
                         "status",
@@ -335,13 +325,16 @@ def main() -> None:
             print(
                 f"  rg_raw={method_stats['rg_raw']['median_ms']}ms hits={method_stats['rg_raw']['hit_count']} | "
                 f"rg_unzip={method_stats['rg_unzip']['median_ms']}ms hits={method_stats['rg_unzip']['hit_count']} "
-                f"noise={method_stats['rg_unzip']['noise_lines']} cell={method_stats['rg_unzip']['has_sheet_cell']} | "
+                f"xml-format={method_stats['rg_unzip']['xml_format_lines']} cell={method_stats['rg_unzip']['has_sheet_cell']} | "
                 f"codefind={method_stats['codefind_xlsx']['median_ms']}ms anchors={method_stats['codefind_xlsx']['hit_count']} "
                 f"raw={method_stats['codefind_xlsx']['raw_matches']} cell={method_stats['codefind_xlsx']['has_sheet_cell']} "
                 f"json={method_stats['codefind_xlsx']['agent_json']} status={method_stats['codefind_xlsx']['status']}",
                 flush=True,
             )
 
+        safe_paths = [(CODEFIND, "<CODEFIND_BIN>"), (unzip_dir, "<UNZIP_DIR>"), (REPO_ROOT, "<REPO>"), (ROOT, "bench")]
+        all_runs = redact(all_runs, safe_paths)
+        medians = redact(medians, safe_paths)
         jsonl_path = RESULTS / "latest.jsonl"
         with jsonl_path.open("w", encoding="utf-8") as f:
             for row in all_runs:
@@ -361,7 +354,7 @@ def main() -> None:
             "raw_matches",
             "has_sheet_cell",
             "agent_json",
-            "noise_lines",
+            "xml_format_lines",
             "status",
         ]
         with csv_path.open("w", encoding="utf-8", newline="") as f:
@@ -390,6 +383,9 @@ def main() -> None:
             pass
 
         meta = {
+            "environment": environment(CODEFIND),
+            "unzip_setup_ms": unzip_setup_ms,
+            "max_anchors": MAX_ANCHORS,
             "generated_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "fixture": rel_display(XLSX),
             "codefind_version": version,
@@ -424,12 +420,12 @@ def main() -> None:
                 "codefind_xlsx": "codefind --format xlsx --term (native cell read, rg_calls=0)",
             },
             "runs_per_query": RUNS,
-            "metric_note": "wall_ms in medians is median of 3 timed search runs (count-matches is separate for rg hit totals)",
+            "metric_note": f"median of {RUNS} runs; rg_unzip excludes separately reported unzip_setup_ms; xml_format_lines is formatting, not relevance",
             "medians": medians,
             "all_runs": all_runs,
         }
         json_path = RESULTS / "latest.json"
-        json_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        json_path.write_text(json.dumps(redact(meta, safe_paths), ensure_ascii=False, indent=2), encoding="utf-8")
 
         md_lines = [
             "# codefind vs rg：游戏数值表 XLSX 基准对比",
@@ -443,9 +439,10 @@ def main() -> None:
             "  - **codefind_xlsx**：`codefind --format xlsx --term`（原生读单元格，**不调用 rg**）",
             f"- 每查询跑 {RUNS} 次取 **median** 墙钟时间（ms）",
             "",
+            f"- 解压准备：{unzip_setup_ms}ms（不含在 rg_unzip 搜索计时内）；anchors 上限 {MAX_ANCHORS}",
             "## 结果表（median）",
             "",
-            "| 查询 | 极性 | rg_raw ms / hits / cell / json | rg_unzip ms / hits / noise / cell / json | codefind ms / anchors / raw / cell / json / status |",
+            "| 查询 | 极性 | rg_raw ms / hits / cell / json | rg_unzip ms / hits / XML-format / cell / json | codefind ms / anchors / raw / cell / json / status |",
             "|---|---|---|---|---|",
         ]
         for m in medians:
@@ -453,16 +450,16 @@ def main() -> None:
             md_lines.append(
                 f"| `{m['query']}` | {m['polarity']} | "
                 f"{a['median_ms']} / {a['hit_count']} / {a['has_sheet_cell']} / {a['agent_json']} | "
-                f"{b['median_ms']} / {b['hit_count']} / {b['noise_lines']} / {b['has_sheet_cell']} / {b['agent_json']} | "
+                f"{b['median_ms']} / {b['hit_count']} / {b['xml_format_lines']} / {b['has_sheet_cell']} / {b['agent_json']} | "
                 f"{c['median_ms']} / {c['hit_count']} / {c['raw_matches']} / {c['has_sheet_cell']} / {c['agent_json']} / `{c['status']}` |"
             )
         md_lines += [
             "",
             "## 结论（产品真相）",
             "",
-            "1. **rg 不是为 XLSX 设计的**：raw 模式对压缩二进制几乎得不到可用命中；unzip 后能在 sheet XML 里命中字面量，但输出是碎 XML，**没有 sheet 名 + A1 坐标的结构化字段**，命中行几乎全是标签噪声。",
+            "1. **rg 不是为 XLSX 设计的**：raw 模式对压缩二进制几乎得不到可用命中；unzip 后能在 sheet XML 里命中字面量，但输出是碎 XML，**没有 sheet 名 + A1 坐标的结构化字段**，XML 标签反映序列化格式，不等于结果不相关。",
             "2. **codefind xlsx 模式不走 rg**（metrics.rg_calls=0）：直接解析工作簿单元格（及传统批注），返回带 `path` / `workbook.sheet` / `workbook.cell` 的 agent 可用 JSON，并有 timeout / max-matches / max-anchors 预算。",
-            "3. **优势不在“比 rg 更快地 grep 文本”**：本基准里 codefind 墙钟常约 30–40ms，rg_unzip 约 4–6ms；优势是**结构化候选 + 预算控制 + sheet/cell 定位**，降低 agent 二次解析与误读成本。",
+            "3. **计时不等价**：rg_unzip 不含解压和坐标重建；codefind 包含 XLSX 解析与坐标输出。不可将速度比当成端到端效率；XML-format 指标不衡量相关性或误读率。",
             "4. **负例**（挑战券 / PvpArena999）：rg 与 codefind 均为 0 命中 / `no_candidates`，且**不能据此断言功能不存在**。",
             "5. **text 模式**最多两次 bounded rg；本文件对比的是 **xlsx 模式 vs agent 用 rg 硬搜表** 的现实路径。",
             "",
