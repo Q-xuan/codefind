@@ -92,7 +92,7 @@ func TestFindZeroHitIsUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != StatusNoCandidates || len(result.Unknowns) != 1 || len(result.Anchors) != 0 {
+	if result.Status != StatusNoCandidates || len(result.Unknowns) < 1 || len(result.Anchors) != 0 {
 		t.Fatalf("unexpected zero-hit result: %+v", result)
 	}
 	if strings.Contains(strings.ToLower(result.Unknowns[0]), "not implemented") {

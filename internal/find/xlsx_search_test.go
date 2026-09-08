@@ -123,6 +123,13 @@ func TestXLSXDiscoveryLimitReported(t *testing.T) {
 
 func TestXLSXMetadataFailureDoesNotExcludeFile(t *testing.T) {
 	root := workbookFixture(t, map[string]string{"xl/workbook.xml": "<workbook>"})
+	data, err := os.ReadFile(filepath.Join(root, "design.xlsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "second.xlsx"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
 	req, e := normalizeRequest(Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}})
 	if e != nil {
 		t.Fatal(e)
@@ -132,7 +139,15 @@ func TestXLSXMetadataFailureDoesNotExcludeFile(t *testing.T) {
 		calls++
 		return nil
 	})
-	if e != nil || calls != 1 || r.WorkbookCoverage.Files[0].MetadataStatus != "unavailable" {
+	if e != nil || calls != 2 || r.WorkbookCoverage.Files[0].MetadataStatus != "unavailable" {
 		t.Fatalf("calls=%d r=%+v e=%v", calls, r, e)
+	}
+}
+
+func TestXLSXSingleWorkbookSkipsOrderingMetadata(t *testing.T) {
+	root := workbookFixture(t, nil)
+	r, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}})
+	if e != nil || r.Status != StatusCandidatesFound || len(r.Anchors) != 2 || r.WorkbookCoverage.Files[0].MetadataStatus != "not_needed" {
+		t.Fatalf("r=%+v e=%v", r, e)
 	}
 }

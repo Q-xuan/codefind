@@ -234,6 +234,9 @@ func Find(ctx context.Context, request Request) (Result, error) {
 	case len(result.Anchors) == 0:
 		result.Status = StatusNoCandidates
 		result.Unknowns = append(result.Unknowns, "0 命中只表示 unknown；请更换稳定 symbol 或扩大已授权范围后回读源码。")
+		if len(normalized.Languages) == 1 && normalized.Languages[0] == "go" {
+			result.Unknowns = append(result.Unknowns, "当前源码范围仅 Go（另含协议、配置和文档）；若目标是其他语言，请显式使用 --lang 或 --lang all，工具不会自动扩大范围。")
+		}
 	default:
 		result.Status = StatusCandidatesFound
 	}

@@ -146,6 +146,12 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 	for i := range candidates {
 		c := &candidates[i]
 		c.score = nameScore(filepath.Base(c.relative), patterns)
+		// No inter-workbook ordering is needed for a single candidate. The
+		// content reader still loads sheet names and orders sheets normally.
+		if len(candidates) == 1 {
+			c.metadata = "not_needed"
+			continue
+		}
 		if metaCtx.Err() != nil || c.size > maxWorkbookBytes {
 			c.metadata = "skipped"
 			continue

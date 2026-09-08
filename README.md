@@ -7,6 +7,8 @@ English | [简体中文](README_CN.md)
 
 Local prerelease: **0.2.0-rc.1**. See [JSON compatibility](docs/json-contract.md) and [release checks](RELEASE_CHECKLIST.md). Public installation commands below use published revisions and may not include this local candidate yet.
 
+Unreleased: a single XLSX candidate skips the extra inter-workbook metadata pass (metadata_status: not_needed); content still uses sheet ordering. Go-scoped zero hits suggest explicit --lang selection without issuing another scan.
+
 `codefind` is a budget-aware discovery CLI for AI coding agents working on game projects. It searches gameplay names, configuration IDs, historical aliases, and candidate symbols across Go source, Proto definitions, CSV / YAML configuration, and Markdown documentation—without building a code graph.
 
 Text mode uses at most two bounded [`rg`](https://github.com/BurntSushi/ripgrep) literal searches. XLSX mode reads workbook content natively. Both return a small set of candidate locations for follow-up reading.

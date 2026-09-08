@@ -135,3 +135,16 @@ func TestNonGoSourceClassification(t *testing.T) {
 		t.Fatal("test directory")
 	}
 }
+
+func TestZeroHitLanguageHintDoesNotExpandSearch(t *testing.T) {
+	requireRG(t)
+	root := makeRepo(t, map[string]string{"clue.lua": "OnlyLuaTarget\n"})
+	r, e := Find(context.Background(), Request{Root: root, Terms: []string{"OnlyLuaTarget"}})
+	if e != nil || r.Status != StatusNoCandidates || r.Metrics.RGCalls != 1 || len(r.Unknowns) < 2 || len(r.Query.Languages) != 1 || r.Query.Languages[0] != "go" {
+		t.Fatalf("r=%+v e=%v", r, e)
+	}
+	r, e = Find(context.Background(), Request{Root: root, Terms: []string{"OnlyLuaTarget"}, Languages: []string{"lua"}})
+	if e != nil || r.Status != StatusCandidatesFound || r.Metrics.RGCalls != 1 {
+		t.Fatalf("r=%+v e=%v", r, e)
+	}
+}
