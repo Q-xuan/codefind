@@ -56,6 +56,12 @@ func TestCLIEndToEnd(t *testing.T) {
 	if got := string(bytes.TrimSpace(invoke([]string{"--version"}, 0))); got != find.Version {
 		t.Fatal(got)
 	}
+	help := string(invoke([]string{"--help-xlsx"}, 0))
+	for _, want := range []string{"--range", "--field", "unknown", "10s"} {
+		if !bytes.Contains([]byte(help), []byte(want)) {
+			t.Fatalf("help-xlsx missing %s: %s", want, help)
+		}
+	}
 	root := t.TempDir()
 	var buf bytes.Buffer
 	z := zip.NewWriter(&buf)
@@ -82,7 +88,7 @@ func TestCLIEndToEnd(t *testing.T) {
 		t.Fatal(e)
 	}
 	var search find.Result
-	if e := json.Unmarshal(invoke([]string{"--root", root, "--format", "xlsx", "--term", "FeatureToken", "--timeout", "10s"}, 0), &search); e != nil {
+	if e := json.Unmarshal(invoke([]string{"--root", root, "--format", "xlsx", "--path", "example.xlsx", "--term", "FeatureToken", "--timeout", "10s"}, 0), &search); e != nil {
 		t.Fatal(e)
 	}
 	if len(search.Anchors) != 1 || search.WorkbookCoverage == nil || !search.WorkbookCoverage.DiscoveryComplete {

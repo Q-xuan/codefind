@@ -3,10 +3,33 @@ package find
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestReadRangeSkipsCellsOutsideBox(t *testing.T) {
+	var body strings.Builder
+	body.WriteString(`<worksheet><sheetData>`)
+	body.WriteString(`<row r="1"><c r="A1" t="inlineStr"><is><t>keep</t></is></c></row>`)
+	for i := 2; i <= 80; i++ {
+		fmt.Fprintf(&body, `<row r="%d"><c r="Z%d" t="inlineStr"><is><t>noise</t></is></c></row>`, i, i)
+	}
+	body.WriteString(`</sheetData></worksheet>`)
+	root := workbookFixture(t, map[string]string{"xl/worksheets/sheet1.xml": body.String()})
+	r, e := ReadWorkbook(context.Background(), ReadRequest{Root: root, File: "design.xlsx", Sheet: "common", Range: "A1"})
+	if e != nil || r.Status != "read_complete" || r.Coverage.Truncated {
+		t.Fatalf("r=%+v e=%v", r, e)
+	}
+	if r.Coverage.CellsScanned != 1 {
+		t.Fatalf("cells_scanned=%d, want 1 in-range cell", r.Coverage.CellsScanned)
+	}
+	if len(r.Cells) != 1 || r.Cells[0].Value == nil || *r.Cells[0].Value != "keep" {
+		t.Fatalf("cells=%+v", r.Cells)
+	}
+}
 
 func TestReadRangeFormulaComments(t *testing.T) {
 	root := workbookFixture(t, nil)

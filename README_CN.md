@@ -36,7 +36,7 @@ codefind --root ./design/math --format xlsx --term Pvp --term "挑战券" --time
 
 此模式不调用 rg，不要求安装 Excel，不建立索引。命中返回 `kind: config`、工作簿相对 `path`、`text`、`groups` 和 `workbook: {sheet, cell, source}`；`source` 为 `cell` 或 `comment`，不提供源码 `line`。同一位置的单元格和批注可分别命中；没有批注命中不表示没有批注。`query.format` 区分 `text` / `xlsx`。
 
-不知道内容在哪个文件时，直接搜索目录即可。工具先读取受限的工作表名称元数据，按文件名和工作表名与查询词的匹配程度排序；名称匹配忽略大小写，仅用于排序，正文仍按大小写敏感的字面量搜索。没有名称线索时先扫描较小工作簿，不猜测玩法别名、不排除名称不匹配的文件。工作簿内部也优先扫描名称匹配的工作表。
+不知道内容在哪个文件时，直接搜索目录即可。`--path` 可以点名单个 `.xlsx`，或用 `!` 前缀排除（`--path '!合十_关卡数值.xlsx'`）。只有排除项时仍默认扫 `.`。7–9MB 大表会吃满整次请求；先点名或排除，不要先加 `--timeout`。timeout **上限仍是 10s**，`20s` 仍是 `invalid_request`。工具先读取受限的工作表名称元数据，按文件名和工作表名与查询词的匹配程度排序；名称匹配忽略大小写，仅用于排序，正文仍按大小写敏感的字面量搜索。没有名称线索时先扫描较小工作簿，不猜测玩法别名、不排除名称不匹配的文件。工作簿内部也优先扫描名称匹配的工作表。`codefind --help-xlsx` 说明 `--path`、`read` 的 field/range，以及零命中措辞。
 
 输出候选采用两层轮询：在已命中的工作簿之间分配名额，每个工作簿内部再轮询已命中的工作表；同表内部保留原有相关性顺序。这样可减少单表重复命中挤占结果，但不保证所有表都能进入很小的输出预算。此策略只筛选已扫描到的候选，不增加扫描范围或预算；为保持来源多样性，跨表结果不保证严格按符号优先级排列。
 
@@ -50,8 +50,8 @@ codefind --root ./design/math --format xlsx --term Pvp --term "挑战券" --time
 - XLSX 使用大小写敏感的字面量匹配；不搜索工作表名、图片、截图、线程评论或公式表达式，不重算公式，也不解释字段。缓存值可能过期，数字/日期格式不渲染，合并单元格只定位实际存储值的单元格。
 - 共享 `--timeout`、`--max-matches`、`--max-anchors`；原始匹配按单元格或批注计数，重复查询组不重复计数。最多扫描 32 个工作簿，单文件不超过 32 MiB，每个工作簿累计 XML 解压读取上限 64 MiB。超过任一预算返回 `budget_exceeded`，已找到的候选仍保留。
 - `metrics.xlsx_files_scanned` 记录尝试扫描的文件数；损坏或不可读工作簿返回 `execution_error`，不会伪装成零命中。
-- 只遍历明确授权的 root/path；不跟随符号链接，跳过点号子目录、vendor、node_modules 和 `~$` 锁文件。此原生模式不读取 `.gitignore`，请使用 `--path` 限定范围；不提取 ZIP 到磁盘、不访问工作簿外部链接、不修改原表。
-- 旧 `.xls`、加密工作簿和截图渲染不支持。零命中不证明字段或说明不存在。
+- 只遍历明确授权的 root/path；不跟随符号链接，跳过点号子目录、vendor、node_modules 和 `~$` 锁文件。此原生模式不读取 `.gitignore`，请使用 `--path` 限定（目录、点名文件或 `!` 排除）；不提取 ZIP 到磁盘、不访问工作簿外部链接、不修改原表。
+- 旧 `.xls`、加密工作簿和截图渲染不支持。零字面命中是 **unknown**，不能写成「表里没有该字段」。不会推断近义写法。
 
 ### 先取证，再理解
 
@@ -122,7 +122,7 @@ codefind --root ./game-project --lang all --term "reward"
 | JavaScript | js（别名 javascript） | .js、.jsx、.mjs、.cjs |
 | TypeScript | ts（别名 typescript） | .ts、.tsx、.mts、.cts |
 
-语言选择只限制源码类型，仍搜索 Proto、Markdown、CSV、YAML；`--path` 可继续缩小目录范围。JS minified 文件、vendor 和 node_modules 继续排除。不识别的语言报 invalid_request，xlsx 模式拒绝 --lang。`query.languages` 返回去重、规范化后的实际语言列表；xlsx 返回空列表。
+语言选择只限制源码类型，仍搜索 Proto、Markdown、CSV、YAML；`--path` 可继续缩小目录，或点名/排除单个文件。JS minified 文件、vendor 和 node_modules 继续排除。不识别的语言报 invalid_request，xlsx 模式拒绝 --lang。`query.languages` 返回去重、规范化后的实际语言列表；xlsx 返回空列表。
 
 除 Go 外均为字面量源码候选，不标注 AST、定义或调用关系；`source` 在这些语言中仅表示源码文本，测试目录内归为 `test`。Go 保留原有 AST 证据。不新增编译器、索引或语言服务，所有语言共享原有搜索次数与预算。
 
@@ -135,7 +135,7 @@ codefind read --root ./design/math --file common.xlsx --sheet common --range B6:
 codefind read --root ./design/math --file common.xlsx --sheet common --anchor D20 --field "参数1" --field param1
 ```
 
-文件名、工作表和坐标均需替换为实际命中位置。`--range` 与 `--anchor` 二选一。
+文件名、工作表和坐标均需替换为实际命中位置。`--range` 与 `--anchor` 二选一。矩形已知时 **优先 `--range`**：`--field 类型` 可能选中旁边同名列。`codefind --help-xlsx` 与 `codefind read --help` 写明这一点。
 
 - 显式 range 最多 4096 格；`--max-cells` 默认返回 96 格、上限 4096；`--max-chars` 默认 24000、上限 200000，限制返回的原始文本字符，不包含 JSON/坐标开销。空格子不逐一返回。
 - anchor 默认 `--strategy adaptive`，需要 `--field` 指定目标字段及可重复别名。结构策略在前 64 列寻找同行相同键，在键右侧向上最多 32 行匹配字段表头；未找到字段列时回退同行＋前 12 行表头。不是自动字段解释，多个字段候选全部保留。
@@ -143,7 +143,7 @@ codefind read --root ./design/math --file common.xlsx --sheet common --anchor D2
 - adaptive 向上未找到字段时，先在命中格下方 8 行、前 64 列寻找字段表头；命中后回读该列自表头起的 9 行，并带上命中格所在列及右侧两列的同行标签。实际策略报告 below_headers，原因 no_field_columns_above；下方仍无字段才回退 row_headers。多列候选全部保留，此规则不证明标题与附近表格的业务关联。为此 adaptive 保留的候选范围最多延伸至命中格下方 16 行，仍受输出与总读取预算约束。
 - 结果结构为 `codefind-read-v1`，包含 cells、field_candidates、merged_ranges、实际 strategy、fallback_reason 和 coverage。单元格分别保留 value、formula、cached_value、comment；共享公式保留原始属性，不重建表达式，不渲染数字格式、不重算。
 - `read_complete` 仅说明选定范围解析及输出未被预算截断，不表示问题已回答；`budget_exceeded` 表示读取或输出未完成。错误沿用 JSON invalid_request/退出码2、execution_error/退出码1，成功结果（含预算耗尽）退出码0。
-- 超时默认 2s、上限 10s；沿用工作簿 32 MiB、XML 64 MiB 限制，最多扫描 100000 个单元格/批注事件和 4096 个合并区域。底层可能需要解析整个目标工作表及共享字符串，不承诺按范围随机读取 ZIP。coverage.ranges 是保留候选的坐标范围，不是磁盘读取范围。
+- 超时默认 2s、上限 10s；沿用工作簿 32 MiB、XML 64 MiB 限制，最多扫描 100000 个**范围内**单元格/批注事件和 4096 个合并区域。选定 range 或 anchor 框外的格子会跳过，不计入该上限。工作簿共享字符串仍会读取。coverage.ranges 是保留候选的坐标范围，不是磁盘读取范围。
 - 合并区域保留坐标；左上角在保留范围外时提示扩大范围，不擅自补读。文本裁剪用 text_truncated 标记；批注属于 cell，不与别处的备注文字混为一谈。
 
 建议流程：搜索定位 → 结构回读 → 必要时显式扩大范围 → 仍不足再查其他表/文档。说明是否足够由 Agent 判断，工具不自动跑完整调查。
@@ -173,16 +173,17 @@ codefind --root .\game-project `
 | 参数 | 含义 | 默认值 / 上限 |
 | --- | --- | --- |
 | `--root` | 要搜索的根目录，不要求是 Git 仓库，必填 | 无 |
-| `--path` | `root` 内的相对目录，可重复 | `.` |
+| `--path` | `root` 内相对目录或单个文件，可重复；`!` 前缀排除 | `.` |
 | `--term` | 领域词、动作词或历史别名，可重复 | 与 `--symbol` 至少提供一项 |
 | `--symbol` | 候选 symbol 或测试名，可重复 | 与 `--term` 至少提供一项 |
 | `--max-anchors` | 最多输出多少个投影锚点 | 12 / 最高 50 |
 | `--max-matches` | 最多读取多少条 `rg` 原始匹配 | 2000 / 最高 10000 |
-| `--timeout` | 整次搜索的总超时 | 2s / 最高 10s |
+| `--timeout` | 整次搜索的总超时。大 xlsx 先用 `--path` 过滤，不要加到 10s 以上 | 2s / 最高 10s |
 | `--encoding` | 本次搜索的文件编码：`auto`、`utf-8`、`gbk`、`gb18030` | `auto` |
 | `--format` | 搜索模式：`text` 或 `xlsx` | `text` |
 | `--lang` | 源码语言，可重复；`all` 选择全部，详见上表 | `go` |
 | `--version` | 输出版本后退出 | - |
+| `--help-xlsx` | 说明 xlsx 的 `--path`、`read` 的 field/range，以及零命中 unknown | - |
 
 ## JSON Contract
 
@@ -256,7 +257,7 @@ codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 
 ## 默认搜索范围
 
-`text` 模式默认搜索 Go、Protocol Buffers、Markdown、CSV 和 YAML；`--lang` 可选择额外支持的源码语言。默认排除 `.git`、`vendor`、`node_modules` 与 minified JavaScript。`xlsx` 模式的范围规则见上文。它不会自动扩大调用方通过 `--path` 提供的目录范围。
+`text` 模式默认搜索 Go、Protocol Buffers、Markdown、CSV 和 YAML；`--lang` 可选择额外支持的源码语言。默认排除 `.git`、`vendor`、`node_modules` 与 minified JavaScript。`xlsx` 模式的范围规则见上文。它不会自动扩大调用方通过 `--path` 提供的目录或文件范围。
 
 每次请求只接受一个 `--root`。多个仓库或普通目录位于同一授权根目录下时，可以通过多个 `--path` 搜索；不支持一次指定任意分散的多个根目录。搜索仍遵循适用的 `.gitignore` 等 ripgrep 忽略规则，不保证枚举根目录下的所有文件。
 

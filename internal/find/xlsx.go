@@ -164,10 +164,21 @@ type xlsxCell struct {
 	Inline  xlsxRichText     `xml:"is"`
 }
 type workbookVisitor struct {
-	sheet   string
-	cell    func(string, xlsxCell) error
-	comment func(string, string, string) error
-	merge   func(string, string) error
+	sheet    string
+	cell     func(string, xlsxCell) error
+	comment  func(string, string, string) error
+	merge    func(string, string) error
+	wantRow  func(int) bool
+	wantCell func(string) bool
+}
+
+func xmlLocalAttr(s xml.StartElement, name string) string {
+	for _, a := range s.Attr {
+		if a.Name.Local == name {
+			return a.Value
+		}
+	}
+	return ""
 }
 
 func walkWorkbook(ctx context.Context, filename string, patterns []string, visitor workbookVisitor) error {
@@ -264,8 +275,21 @@ func walkWorkbook(ctx context.Context, filename string, patterns []string, visit
 				}
 				return visitor.merge(sheet.Name, m.Ref)
 			}
+			if s.Name.Local == "row" && visitor.wantRow != nil {
+				if r := xmlLocalAttr(s, "r"); r != "" {
+					n, convErr := strconv.Atoi(r)
+					if convErr == nil && !visitor.wantRow(n) {
+						return d.Skip()
+					}
+				}
+			}
 			if s.Name.Local != "c" {
 				return nil
+			}
+			if visitor.wantCell != nil {
+				if ref := xmlLocalAttr(s, "r"); ref != "" && !visitor.wantCell(ref) {
+					return d.Skip()
+				}
 			}
 			var v xlsxCell
 			if err := d.DecodeElement(&v, &s); err != nil {
@@ -325,6 +349,9 @@ func walkWorkbook(ctx context.Context, filename string, patterns []string, visit
 				}
 				if !validCell(v.Ref) {
 					return errors.New("invalid comment address")
+				}
+				if visitor.wantCell != nil && !visitor.wantCell(v.Ref) {
+					return nil
 				}
 				return visitor.comment(sheet.Name, v.Ref, v.Text.value())
 			})

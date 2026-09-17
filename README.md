@@ -36,7 +36,7 @@ codefind --root ./design/math --format xlsx --term Pvp --term "挑战券" --time
 
 This mode needs neither rg nor Excel and builds no index. Matches contain `kind: config`, a relative workbook `path`, `text`, `groups`, and `workbook: {sheet, cell, source}`. `source` is `cell` or `comment`; source-code `line` is omitted. A cell and its comment may match separately; no comment match does not imply no comment exists. `query.format` identifies `text` or `xlsx`.
 
-When the file is unknown, search the directory directly. Bounded sheet-name metadata is read first; matching workbook and sheet names raise priority. Name matching is case-insensitive and affects ordering only; content matching remains case-sensitive and literal. Ties favor smaller workbooks. No gameplay aliases are inferred and name mismatches never exclude a file. Matching sheet names are also scanned first inside each workbook.
+When the file is unknown, search the directory directly. `--path` may name a single `.xlsx` or exclude one with a `!` prefix (`--path '!合十_关卡数值.xlsx'`). Only-exclude lists still search `.`. Large 7–9 MB workbooks can consume the whole request; name or exclude them before raising `--timeout`. The timeout ceiling stays **10s**; `20s` is still `invalid_request`. Bounded sheet-name metadata is read first; matching workbook and sheet names raise priority. Name matching is case-insensitive and affects ordering only; content matching remains case-sensitive and literal. Ties favor smaller workbooks. No gameplay aliases are inferred and name mismatches never exclude a file. Matching sheet names are also scanned first inside each workbook. `codefind --help-xlsx` explains `--path`, `read --range` vs `--field`, and zero-hit wording.
 
 Output uses two-level round-robin allocation across matched workbooks and their matched sheets, preserving relevance order within each sheet. This reduces domination by repeated hits from one sheet, but cannot guarantee every sheet fits a small output budget. It only selects already-scanned candidates; scan scope and budgets do not expand. Cross-sheet output may trade strict symbol priority for source diversity.
 
@@ -50,8 +50,8 @@ Scope and limits:
 - Matching is case-sensitive and literal. Sheet names, images, screenshots, threaded comments, and formula expressions are not searched. Formulas are not recalculated, cached results may be stale, numeric/date display formatting is not rendered, and merged cells are located at the cell actually storing the value. Fields are not interpreted.
 - The request shares `--timeout`, `--max-matches`, and `--max-anchors`. Raw matches count cells or comments once even when both query groups match. At most 32 workbooks are scanned, each up to 32 MiB on disk with a cumulative XML decompression-read limit of 64 MiB per workbook. Limits produce `budget_exceeded` with partial candidates retained.
 - `metrics.xlsx_files_scanned` counts attempted files. Corrupt or unreadable workbooks produce `execution_error`, not a misleading zero-hit result.
-- Traversal stays within authorized root/path, does not follow symlinks, and skips dot-prefixed subdirectories, vendor, node_modules, and `~$` lock files. This native mode does not read `.gitignore`; restrict scope with `--path`. ZIP parts are never extracted to disk, external links are never fetched, and workbooks are never modified.
-- Legacy `.xls`, encrypted workbooks, and screenshot rendering are unsupported. Zero hits do not prove absence of a field or explanation.
+- Traversal stays within authorized root/path, does not follow symlinks, and skips dot-prefixed subdirectories, vendor, node_modules, and `~$` lock files. This native mode does not read `.gitignore`; restrict scope with `--path` (directory, named file, or `!` exclude). ZIP parts are never extracted to disk, external links are never fetched, and workbooks are never modified.
+- Legacy `.xls`, encrypted workbooks, and screenshot rendering are unsupported. A zero lexical hit is **unknown**, not “the field is not in the workbook.” Near-synonyms are not inferred.
 
 ### Evidence first, understanding next
 
@@ -122,7 +122,7 @@ codefind --root ./game-project --lang all --term "reward"
 | JavaScript | js (alias javascript) | .js, .jsx, .mjs, .cjs |
 | TypeScript | ts (alias typescript) | .ts, .tsx, .mts, .cts |
 
-Language selection narrows source extensions, while Proto, Markdown, CSV and YAML remain searchable. Use `--path` to narrow directories. Minified JS, vendor and node_modules remain excluded. Unknown languages produce invalid_request; xlsx rejects --lang. `query.languages` echoes normalized, deduplicated languages (empty for xlsx).
+Language selection narrows source extensions, while Proto, Markdown, CSV and YAML remain searchable. Use `--path` to narrow directories or name/exclude a single file. Minified JS, vendor and node_modules remain excluded. Unknown languages produce invalid_request; xlsx rejects --lang. `query.languages` echoes normalized, deduplicated languages (empty for xlsx).
 
 Non-Go results are lexical candidates without AST or definition/call claims: source means source text, and test directories are classified as test. Go keeps its existing AST enrichment. No compiler, index or language server is added; all languages share the existing call and resource budgets.
 
@@ -135,7 +135,7 @@ codefind read --root ./design/math --file common.xlsx --sheet common --range B6:
 codefind read --root ./design/math --file common.xlsx --sheet common --anchor D20 --field "参数1" --field param1
 ```
 
-Replace names and coordinates with actual search results. Supply exactly one of `--range` and `--anchor`.
+Replace names and coordinates with actual search results. Supply exactly one of `--range` and `--anchor`. When the rectangle is known, **`--range` is safer than `--field`**: `--field 类型` can latch onto a nearby same-header column. `codefind --help-xlsx` and `codefind read --help` state this explicitly.
 
 - Explicit ranges allow at most 4096 positions. `--max-cells` defaults to 96 returned cells (maximum 4096); `--max-chars` defaults to 24000 (maximum 200000) for returned source text, excluding JSON/coordinate overhead. Empty positions are not individually emitted.
 - Anchor mode defaults to `--strategy adaptive`, with repeatable `--field` aliases. Structure selection finds equal row keys within the first 64 columns, then searches up to 32 rows above columns to their right for matching headers. If no field column is found, it falls back to the row plus the first 12 header rows. Multiple candidates remain unresolved.
@@ -143,7 +143,7 @@ Replace names and coordinates with actual search results. Supply exactly one of 
 - When upward selection finds no field, adaptive first checks the next 8 rows within the first 64 columns for field headers. It returns 9 rows starting at each candidate header in that column, plus row labels in the anchor column and its two right neighbors. It reports below_headers with reason no_field_columns_above; only when no lower header exists does it fall back to row_headers. Multiple candidates remain unresolved, and proximity does not establish a business relationship. Adaptive retained scope extends up to 16 rows below the anchor, within the same output and reading budgets.
 - `codefind-read-v1` returns cells, field_candidates, merged_ranges, actual strategy, fallback_reason, and coverage. Cells distinguish value, formula, cached_value, and comment. Shared-formula attributes are preserved, not expanded. Values are not formatted or recalculated.
 - `read_complete` means selected-scope parsing/output was not budget-truncated, not that a question was answered. `budget_exceeded` means incomplete reading/output. Errors retain invalid_request/exit 2 and execution_error/exit 1; result statuses, including budget exhaustion, exit 0.
-- Timeout defaults to 2s (maximum 10s). Workbook/XML limits remain 32/64 MiB, with at most 100000 cell/comment events and 4096 merge regions scanned. Reading may parse the entire target worksheet and shared strings; coverage.ranges describes retained candidate coordinates, not disk I/O ranges.
+- Timeout defaults to 2s (maximum 10s). Workbook/XML limits remain 32/64 MiB, with at most 100000 **in-scope** cell/comment events and 4096 merge regions scanned. Cells outside the selected range or anchor boxes are skipped and do not count toward that cap. Shared strings for the workbook are still read. `coverage.ranges` describes retained candidate coordinates, not disk I/O ranges.
 - Merge coordinates are preserved. If the top-left value is outside retained scope, expand the range explicitly. Cropped text is marked text_truncated. Direct cell comments are not conflated with nearby explanatory text.
 
 Use search → structural readback → explicit range expansion → other-sheet/document search as needed. The agent decides whether evidence is sufficient; the tool does not automatically complete the investigation.
@@ -173,16 +173,17 @@ Provide at least one `--term` or `--symbol`. Repeat either flag to send multiple
 | Option | Meaning | Default / limit |
 | --- | --- | --- |
 | `--root` | Search root; need not be a Git repository; required | none |
-| `--path` | Relative directory inside `root`; repeatable | `.` |
+| `--path` | Relative directory or file inside `root`; repeatable. `!` prefix excludes that path | `.` |
 | `--term` | Domain term, action phrase, or historical alias; repeatable | at least one term or symbol |
 | `--symbol` | Candidate symbol or test name; repeatable | at least one term or symbol |
 | `--max-anchors` | Maximum projected anchors | 12 / maximum 50 |
 | `--max-matches` | Maximum raw matches read from `rg` | 2000 / maximum 10000 |
-| `--timeout` | Total search timeout | 2s / maximum 10s |
+| `--timeout` | Total search timeout. Filter large xlsx with `--path` first; do not raise this above 10s | 2s / maximum 10s |
 | `--encoding` | File encoding for this request: `auto`, `utf-8`, `gbk`, `gb18030` | `auto` |
 | `--format` | Search mode: `text` or `xlsx` | `text` |
 | `--lang` | Source language, repeatable; all selects every supported language | `go` |
 | `--version` | Print the version and exit | - |
+| `--help-xlsx` | Explain xlsx `--path`, `read --range` vs `--field`, and zero-hit unknown | - |
 
 ## JSON contract
 
@@ -256,7 +257,7 @@ Budgets are part of the result contract:
 
 ## Default search scope
 
-`text` mode defaults to Go, Protocol Buffers, Markdown, CSV, and YAML; `--lang` selects additional supported source languages. It excludes `.git`, `vendor`, `node_modules`, and minified JavaScript by default. See above for `xlsx` traversal rules. Neither mode expands beyond the directories supplied through `--path`.
+`text` mode defaults to Go, Protocol Buffers, Markdown, CSV, and YAML; `--lang` selects additional supported source languages. It excludes `.git`, `vendor`, `node_modules`, and minified JavaScript by default. See above for `xlsx` traversal rules. Neither mode expands beyond the directories or files supplied through `--path`.
 
 Each request accepts one `--root`. Multiple repositories or ordinary directories under the same authorized root can be searched through repeated `--path` flags; arbitrary separate roots are not supported in one request. Applicable ripgrep ignore rules, including `.gitignore`, still apply, so not every file under the root is necessarily searched.
 

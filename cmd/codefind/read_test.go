@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -21,6 +22,12 @@ func TestReadCLIInvalidAndHelp(t *testing.T) {
 	var out bytes.Buffer
 	if code := runRead([]string{"--help"}, &out, &out); code != 0 || out.Len() == 0 {
 		t.Fatal(code)
+	}
+	text := out.String()
+	for _, want := range []string{"--range", "--field", "更稳", "unknown"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("read help missing %q in %s", want, text)
+		}
 	}
 }
 

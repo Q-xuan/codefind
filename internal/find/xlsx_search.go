@@ -72,9 +72,58 @@ func workbookNameScore(ctx context.Context, filename string, patterns []string) 
 func discoverWorkbooks(ctx context.Context, req normalizedRequest) ([]workbookCandidate, bool, error) {
 	candidates := []workbookCandidate{}
 	seen := map[string]bool{}
-	for _, scope := range req.Paths {
+	add := func(filename string, size int64) error {
+		physical, err := filepath.EvalSymlinks(filename)
+		if err != nil {
+			return err
+		}
+		if !inside(req.root, physical) {
+			return errors.New("XLSX path escapes root")
+		}
+		if seen[physical] {
+			return nil
+		}
+		relative, err := filepath.Rel(req.root, filename)
+		if err != nil {
+			return err
+		}
+		rel := filepath.ToSlash(relative)
+		if pathExcluded(rel, req.excludes) {
+			return nil
+		}
+		seen[physical] = true
+		if len(candidates) >= maxWorkbooks {
+			return errWorkbookBudget
+		}
+		candidates = append(candidates, workbookCandidate{physical: physical, relative: rel, size: size, metadata: "pending"})
+		return nil
+	}
+	scopes := req.includes
+	if len(scopes) == 0 {
+		scopes = req.Paths
+	}
+	for _, scope := range scopes {
+		if pathExcluded(scope, req.excludes) {
+			continue
+		}
 		base := filepath.Join(req.root, filepath.FromSlash(scope))
-		err := filepath.WalkDir(base, func(filename string, d fs.DirEntry, walkErr error) error {
+		info, err := os.Stat(base)
+		if err != nil {
+			return nil, false, err
+		}
+		if info.Mode().IsRegular() {
+			if !strings.EqualFold(filepath.Ext(base), ".xlsx") || strings.HasPrefix(filepath.Base(base), "~$") {
+				continue
+			}
+			if err := add(base, info.Size()); err != nil {
+				if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errWorkbookBudget) {
+					return candidates, false, nil
+				}
+				return nil, false, err
+			}
+			continue
+		}
+		err = filepath.WalkDir(base, func(filename string, d fs.DirEntry, walkErr error) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -88,35 +137,22 @@ func discoverWorkbooks(ctx context.Context, req normalizedRequest) ([]workbookCa
 				if filename != base && strings.HasPrefix(d.Name(), ".") || d.Name() == "vendor" || d.Name() == "node_modules" {
 					return filepath.SkipDir
 				}
+				if filename != base {
+					rel, relErr := filepath.Rel(req.root, filename)
+					if relErr == nil && pathExcluded(filepath.ToSlash(rel), req.excludes) {
+						return filepath.SkipDir
+					}
+				}
 				return nil
 			}
 			if !strings.EqualFold(filepath.Ext(filename), ".xlsx") || strings.HasPrefix(d.Name(), "~$") {
 				return nil
 			}
-			physical, err := filepath.EvalSymlinks(filename)
-			if err != nil {
-				return err
-			}
-			if !inside(req.root, physical) {
-				return errors.New("XLSX path escapes root")
-			}
-			if seen[physical] {
-				return nil
-			}
-			seen[physical] = true
-			if len(candidates) >= maxWorkbooks {
-				return errWorkbookBudget
-			}
 			info, err := d.Info()
 			if err != nil {
 				return err
 			}
-			relative, err := filepath.Rel(req.root, filename)
-			if err != nil {
-				return err
-			}
-			candidates = append(candidates, workbookCandidate{physical: physical, relative: filepath.ToSlash(relative), size: info.Size(), metadata: "pending"})
-			return nil
+			return add(filename, info.Size())
 		})
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errWorkbookBudget) {
@@ -266,10 +302,10 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 	switch {
 	case budget:
 		result.Status = StatusBudgetExceeded
-		result.Unknowns = append(result.Unknowns, "XLSX 扫描不完整，请查看 workbook_coverage 中未完成文件及原因；可缩小范围或增加 timeout 重试。")
+		result.Unknowns = append(result.Unknowns, "XLSX 扫描不完整，请查看 workbook_coverage 中未完成文件及原因；先用 --path 点名或 !排除单个工作簿，不要先把 timeout 加到 10s 以上。")
 	case len(anchors) == 0:
 		result.Status = StatusNoCandidates
-		result.Unknowns = append(result.Unknowns, "零命中不代表内容不存在；请核对查询词和支持的内容类型。")
+		result.Unknowns = append(result.Unknowns, "零字面命中只表示 unknown，不能写成表里没有该字段；近义写法、别名或未扫描文件仍可能存在。")
 	default:
 		result.Status = StatusCandidatesFound
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -118,6 +119,51 @@ func TestXLSXDiscoveryLimitReported(t *testing.T) {
 	files, complete, e := discoverWorkbooks(context.Background(), req)
 	if e != nil || complete || len(files) != maxWorkbooks {
 		t.Fatalf("files=%d complete=%v err=%v", len(files), complete, e)
+	}
+}
+
+func TestXLSXPathNamesAndExcludesWorkbook(t *testing.T) {
+	root := workbookFixture(t, nil)
+	data, e := os.ReadFile(filepath.Join(root, "design.xlsx"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "skip.xlsx"), data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	named, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}, Paths: []string{"design.xlsx"}})
+	if e != nil || named.Status != StatusCandidatesFound || named.Metrics.XLSXFilesScanned != 1 {
+		t.Fatalf("named=%+v e=%v", named, e)
+	}
+	if len(named.WorkbookCoverage.Files) != 1 || named.WorkbookCoverage.Files[0].Path != "design.xlsx" {
+		t.Fatalf("named coverage=%+v", named.WorkbookCoverage)
+	}
+	excluded, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}, Paths: []string{"!skip.xlsx"}})
+	if e != nil || excluded.Metrics.XLSXFilesScanned != 1 {
+		t.Fatalf("excluded=%+v e=%v", excluded, e)
+	}
+	if len(excluded.WorkbookCoverage.Files) != 1 || excluded.WorkbookCoverage.Files[0].Path != "design.xlsx" {
+		t.Fatalf("excluded coverage=%+v", excluded.WorkbookCoverage)
+	}
+	if !contains(excluded.Query.Paths, ".") || !contains(excluded.Query.Paths, "!skip.xlsx") {
+		t.Fatalf("query.paths=%v", excluded.Query.Paths)
+	}
+}
+
+func TestXLSXZeroHitIsUnknownNotAbsence(t *testing.T) {
+	root := workbookFixture(t, nil)
+	r, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"木鱼上限"}})
+	if e != nil || r.Status != StatusNoCandidates || len(r.Anchors) != 0 {
+		t.Fatalf("r=%+v e=%v", r, e)
+	}
+	joined := strings.Join(r.Unknowns, "\n")
+	if !strings.Contains(joined, "unknown") {
+		t.Fatalf("unknowns missing unknown: %q", joined)
+	}
+	for _, bad := range []string{"表里没有", "不在工作簿", "内容不存在", "not in the workbook"} {
+		if strings.Contains(joined, bad) {
+			t.Fatalf("zero hit claimed absence: %q", joined)
+		}
 	}
 }
 
