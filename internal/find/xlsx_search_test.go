@@ -3,6 +3,7 @@ package find
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,9 +33,9 @@ func TestXLSXMetadataOrdering(t *testing.T) {
 	if len(r.WorkbookCoverage.Files) != 2 || r.WorkbookCoverage.Files[0].Path != "common.xlsx" {
 		t.Fatalf("coverage=%+v", r.WorkbookCoverage)
 	}
-	score, e := workbookNameScore(context.Background(), filepath.Join(root, "design.xlsx"), []string{"COMMON"})
-	if e != nil || score != 1 {
-		t.Fatalf("score=%d error=%v", score, e)
+	sheet, sst, e := workbookHints(context.Background(), filepath.Join(root, "design.xlsx"), []string{"COMMON"})
+	if e != nil || sheet != 1 || sst != 0 {
+		t.Fatalf("sheet=%d sst=%d error=%v", sheet, sst, e)
 	}
 }
 
@@ -135,8 +136,11 @@ func TestXLSXPathNamesAndExcludesWorkbook(t *testing.T) {
 	if e != nil || named.Status != StatusCandidatesFound || named.Metrics.XLSXFilesScanned != 1 {
 		t.Fatalf("named=%+v e=%v", named, e)
 	}
-	if len(named.WorkbookCoverage.Files) != 1 || named.WorkbookCoverage.Files[0].Path != "design.xlsx" {
+	if !namedHasPath(named, "design.xlsx") || named.WorkbookCoverage.NextPath == "" {
 		t.Fatalf("named coverage=%+v", named.WorkbookCoverage)
+	}
+	if !hasDeferred(named, "skip.xlsx") {
+		t.Fatalf("named hop lost siblings: %+v", named.WorkbookCoverage)
 	}
 	excluded, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}, Paths: []string{"!skip.xlsx"}})
 	if e != nil || excluded.Metrics.XLSXFilesScanned != 1 {
@@ -192,8 +196,11 @@ func TestXLSXDirectoryScansOneWorkbook(t *testing.T) {
 	if len(r.WorkbookCoverage.Files) != 2 || r.WorkbookCoverage.Files[1].Reason != reasonDeferred || r.WorkbookCoverage.Files[1].Status != "pending" {
 		t.Fatalf("coverage=%+v", r.WorkbookCoverage)
 	}
-	if !r.WorkbookCoverage.DiscoveryComplete {
-		t.Fatal("discovery should list every file")
+	if !r.WorkbookCoverage.DiscoveryComplete || r.WorkbookCoverage.NextPath == "" {
+		t.Fatalf("coverage=%+v", r.WorkbookCoverage)
+	}
+	if r.WorkbookCoverage.Files[0].Size == 0 || r.WorkbookCoverage.Files[0].Score < 0 {
+		t.Fatalf("missing rank fields: %+v", r.WorkbookCoverage.Files[0])
 	}
 }
 
@@ -288,6 +295,114 @@ func TestXLSXDeferredZeroHitIsUnknown(t *testing.T) {
 	if strings.Contains(joined, "不在工作簿") || strings.Contains(joined, "内容不存在") {
 		t.Fatalf("claimed absence: %q", joined)
 	}
+}
+
+func TestXLSXTieDoesNotPreferTinyFile(t *testing.T) {
+	tinyRoot := workbookFixture(t, map[string]string{"xl/sharedStrings.xml": `<sst><si><t>木鱼</t></si></sst>`})
+	pad := make([]byte, 700<<10)
+	if _, e := rand.New(rand.NewSource(1)).Read(pad); e != nil {
+		t.Fatal(e)
+	}
+	midRoot := workbookFixture(t, map[string]string{
+		"xl/sharedStrings.xml": `<sst><si><t>木鱼</t></si></sst>`,
+		"xl/padding.bin":       string(pad),
+	})
+	root := t.TempDir()
+	tiny, e := os.ReadFile(filepath.Join(tinyRoot, "design.xlsx"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	mid, e := os.ReadFile(filepath.Join(midRoot, "design.xlsx"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "aaa.xlsx"), tiny, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "zzz.xlsx"), mid, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if int64(len(mid)) < 512<<10 {
+		t.Fatalf("mid fixture too small: %d", len(mid))
+	}
+	r, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"木鱼"}})
+	if e != nil || r.Metrics.XLSXFilesScanned != 1 {
+		t.Fatalf("r=%+v e=%v", r, e)
+	}
+	if r.WorkbookCoverage.Files[0].Path != "zzz.xlsx" {
+		t.Fatalf("tiny file won a tied term: %+v", r.WorkbookCoverage)
+	}
+	if r.WorkbookCoverage.Files[0].Score != r.WorkbookCoverage.Files[1].Score {
+		t.Fatalf("expected tied scores, got %+v", r.WorkbookCoverage)
+	}
+	if r.WorkbookCoverage.Files[0].Size <= r.WorkbookCoverage.Files[1].Size {
+		t.Fatalf("expected mid-size first: %+v", r.WorkbookCoverage)
+	}
+}
+
+func TestXLSXNamedPathKeepsDeferredQueue(t *testing.T) {
+	root := workbookFixture(t, nil)
+	data, e := os.ReadFile(filepath.Join(root, "design.xlsx"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "mid.xlsx"), data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "zzz.xlsx"), data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	first, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}})
+	if e != nil || first.WorkbookCoverage.NextPath == "" {
+		t.Fatalf("first=%+v e=%v", first, e)
+	}
+	hop, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}, Paths: []string{first.WorkbookCoverage.NextPath}})
+	if e != nil || hop.Metrics.XLSXFilesScanned != 1 {
+		t.Fatalf("hop=%+v e=%v", hop, e)
+	}
+	if len(hop.WorkbookCoverage.Files) != 3 {
+		t.Fatalf("hop dropped the queue: %+v", hop.WorkbookCoverage)
+	}
+	scanned := 0
+	deferred := 0
+	for _, f := range hop.WorkbookCoverage.Files {
+		if f.Status == "complete" {
+			scanned++
+			if f.Path != first.WorkbookCoverage.NextPath {
+				t.Fatalf("hop scanned %s, want %s", f.Path, first.WorkbookCoverage.NextPath)
+			}
+		}
+		if f.Reason == reasonDeferred {
+			deferred++
+		}
+	}
+	if scanned != 1 || deferred != 2 || hop.WorkbookCoverage.NextPath == "" || hop.WorkbookCoverage.NextPath == first.WorkbookCoverage.NextPath {
+		t.Fatalf("hop=%+v", hop.WorkbookCoverage)
+	}
+}
+
+func namedHasPath(r Result, path string) bool {
+	if r.WorkbookCoverage == nil {
+		return false
+	}
+	for _, f := range r.WorkbookCoverage.Files {
+		if f.Path == path && f.Status == "complete" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDeferred(r Result, path string) bool {
+	if r.WorkbookCoverage == nil {
+		return false
+	}
+	for _, f := range r.WorkbookCoverage.Files {
+		if f.Path == path && f.Reason == reasonDeferred {
+			return true
+		}
+	}
+	return false
 }
 
 func TestXLSXMetadataFailureDoesNotExcludeFile(t *testing.T) {

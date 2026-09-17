@@ -16,6 +16,7 @@ import (
 
 type WorkbookCoverage struct {
 	DiscoveryComplete bool           `json:"discovery_complete"`
+	NextPath          string         `json:"next_path,omitempty"`
 	Files             []WorkbookScan `json:"files"`
 }
 type WorkbookScan struct {
@@ -23,6 +24,8 @@ type WorkbookScan struct {
 	Status         string `json:"status"` // pending, complete, partial
 	Reason         string `json:"reason,omitempty"`
 	MetadataStatus string `json:"metadata_status"`
+	Score          int    `json:"score"`
+	Size           int64  `json:"size"`
 }
 type workbookCandidate struct {
 	physical, relative string
@@ -48,20 +51,42 @@ func nameScore(name string, patterns []string) int {
 	return score
 }
 
-func literalScore(text string, patterns []string) int {
-	score := 0
+func literalCount(text string, patterns []string) int {
+	n := 0
 	for _, p := range patterns {
-		if p != "" && strings.Contains(text, p) {
-			score++
+		if p != "" {
+			n += strings.Count(text, p)
 		}
 	}
-	return score
+	return n
+}
+
+func rankScore(nameHits, sheetHits, sstHits int) int {
+	return nameHits*8 + sheetHits*4 + min(sstHits, 64)
+}
+
+// Mid-size design workbooks outrank tiny generic tables and very large books
+// when cheap scores tie. Smaller-file-first is what picked the ~200KB decoy.
+func sizeBand(size int64) int {
+	switch {
+	case size >= 512<<10 && size <= 6<<20:
+		return 2
+	case size > 6<<20:
+		return 1
+	default:
+		return 0
+	}
 }
 
 func workbookNameScore(ctx context.Context, filename string, patterns []string) (int, error) {
+	sheet, sst, err := workbookHints(ctx, filename, patterns)
+	return rankScore(0, sheet, sst), err
+}
+
+func workbookHints(ctx context.Context, filename string, patterns []string) (int, int, error) {
 	z, err := zip.OpenReader(filename)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer z.Close()
 	a := xlsxArchive{ctx: ctx, remaining: 1 << 20, files: map[string]*zip.File{}}
@@ -70,18 +95,19 @@ func workbookNameScore(ctx context.Context, filename string, patterns []string) 
 			a.files[f.Name] = f
 		}
 	}
-	score := 0
+	sheet := 0
 	sheetErr := a.decode("xl/workbook.xml", func(d *xml.Decoder, s xml.StartElement) error {
 		if s.Name.Local != "sheet" {
 			return nil
 		}
 		for _, attr := range s.Attr {
 			if attr.Name.Local == "name" {
-				score = max(score, nameScore(attr.Value, patterns))
+				sheet = max(sheet, nameScore(attr.Value, patterns))
 			}
 		}
 		return nil
 	})
+	sst := 0
 	if a.files["xl/sharedStrings.xml"] != nil {
 		sstErr := a.decode("xl/sharedStrings.xml", func(d *xml.Decoder, s xml.StartElement) error {
 			if s.Name.Local != "si" {
@@ -91,15 +117,15 @@ func workbookNameScore(ctx context.Context, filename string, patterns []string) 
 			if err := d.DecodeElement(&v, &s); err != nil {
 				return err
 			}
-			score = max(score, literalScore(v.value(), patterns))
+			sst += literalCount(v.value(), patterns)
 			return nil
 		})
 		if sheetErr != nil {
-			return score, sheetErr
+			return sheet, sst, sheetErr
 		}
-		return score, sstErr
+		return sheet, sst, sstErr
 	}
-	return score, sheetErr
+	return sheet, sst, sheetErr
 }
 
 func discoverWorkbooks(ctx context.Context, req normalizedRequest) ([]workbookCandidate, bool, error) {
@@ -194,6 +220,44 @@ func discoverWorkbooks(ctx context.Context, req normalizedRequest) ([]workbookCa
 			return nil, false, err
 		}
 	}
+	if !req.dirScope && len(req.includes) == 1 {
+		rel := req.includes[0]
+		base := filepath.Join(req.root, filepath.FromSlash(rel))
+		info, err := os.Stat(base)
+		if err == nil && info.Mode().IsRegular() {
+			parent := filepath.Dir(base)
+			if inside(req.root, parent) {
+				err = filepath.WalkDir(parent, func(filename string, d fs.DirEntry, walkErr error) error {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					if walkErr != nil {
+						return walkErr
+					}
+					if d.Type()&os.ModeSymlink != 0 || d.IsDir() {
+						if d.IsDir() && filename != parent {
+							return filepath.SkipDir
+						}
+						return nil
+					}
+					if !strings.EqualFold(filepath.Ext(filename), ".xlsx") || strings.HasPrefix(d.Name(), "~$") {
+						return nil
+					}
+					info, err := d.Info()
+					if err != nil {
+						return err
+					}
+					return add(filename, info.Size())
+				})
+				if err != nil {
+					if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errWorkbookBudget) {
+						return candidates, false, nil
+					}
+					return nil, false, err
+				}
+			}
+		}
+	}
 	return candidates, true, nil
 }
 
@@ -215,15 +279,16 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 	metaCtx, metaCancel := context.WithTimeout(ctx, req.Timeout/5)
 	for i := range candidates {
 		c := &candidates[i]
-		c.score = nameScore(filepath.Base(c.relative), patterns)
+		nameHits := nameScore(filepath.Base(c.relative), patterns)
+		c.score = rankScore(nameHits, 0, 0)
 		if metaCtx.Err() != nil || c.size > maxWorkbookBytes {
 			c.metadata = "skipped"
 			continue
 		}
 		one, cancel := context.WithTimeout(metaCtx, workbookMetaTimeout)
-		score, e := workbookNameScore(one, c.physical, patterns)
+		sheet, sst, e := workbookHints(one, c.physical, patterns)
 		cancel()
-		c.score += score
+		c.score = rankScore(nameHits, sheet, sst)
 		if e == nil {
 			c.metadata = "complete"
 		} else {
@@ -236,35 +301,55 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 		if a.score != b.score {
 			return a.score > b.score
 		}
-		if a.size != b.size {
-			return a.size < b.size
+		if sizeBand(a.size) != sizeBand(b.size) {
+			return sizeBand(a.size) > sizeBand(b.size)
 		}
 		return a.relative < b.relative
 	})
 	coverage := &WorkbookCoverage{DiscoveryComplete: complete, Files: []WorkbookScan{}}
 	for _, c := range candidates {
-		coverage.Files = append(coverage.Files, WorkbookScan{Path: c.relative, Status: "pending", Reason: "total_timeout", MetadataStatus: c.metadata})
+		coverage.Files = append(coverage.Files, WorkbookScan{Path: c.relative, Status: "pending", Reason: "total_timeout", MetadataStatus: c.metadata, Score: c.score, Size: c.size})
 	}
 	result.WorkbookCoverage = coverage
 	result.Unknowns = append(result.Unknowns, "XLSX 仅搜索单元格存储值和传统批注；不重算公式、不搜索图片或线程评论。")
 	anchors := []Anchor{}
 	matches := 0
 	budget := !complete
-	scanN := len(candidates)
-	if req.dirScope && len(candidates) > 1 {
-		scanN = 1
-		for i := scanN; i < len(coverage.Files); i++ {
-			coverage.Files[i].Status = "pending"
-			coverage.Files[i].Reason = reasonDeferred
+	namedSingle := !req.dirScope && len(req.includes) == 1
+	scanIdx := []int{}
+	if (req.dirScope || namedSingle) && len(candidates) > 1 {
+		idx := 0
+		if namedSingle {
+			for i, c := range candidates {
+				if c.relative == req.includes[0] {
+					idx = i
+					break
+				}
+			}
 		}
-		result.Unknowns = append(result.Unknowns, "目录冷启动只内容扫描排名最高的一簿（文件名、表名、共享字符串字面量；并列取较小文件）。reason=deferred 的文件未扫内容，请用 --path 点名下一簿；未扫描不等于没有该字段。")
+		scanIdx = []int{idx}
+		for i := range coverage.Files {
+			if i != idx {
+				coverage.Files[i].Status = "pending"
+				coverage.Files[i].Reason = reasonDeferred
+			}
+		}
+		if idx+1 < len(candidates) {
+			coverage.NextPath = candidates[idx+1].relative
+		}
+		result.Unknowns = append(result.Unknowns, "本次只内容扫描一簿。workbook_coverage 含 score/size；next_path 与 reason=deferred 是下一跳，请用 --path 点名。未扫描不等于没有该字段。")
+	} else {
+		for i := range candidates {
+			scanIdx = append(scanIdx, i)
+		}
 	}
 	// One selected workbook keeps the remaining request; named multi-file shares slices.
 	slice := req.Timeout
-	if scanN > 1 {
-		slice = req.Timeout / time.Duration(min(scanN, 4))
+	if len(scanIdx) > 1 {
+		slice = req.Timeout / time.Duration(min(len(scanIdx), 4))
 	}
-	for i, c := range candidates[:scanN] {
+	for pos, i := range scanIdx {
+		c := candidates[i]
 		if ctx.Err() != nil {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return Result{}, ctx.Err()
@@ -313,7 +398,7 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 		case errors.Is(e, errMatchBudget):
 			budget = true
 			report.Reason = "match_limit"
-			for j := i + 1; j < scanN; j++ {
+			for _, j := range scanIdx[pos+1:] {
 				coverage.Files[j].Reason = "match_limit"
 			}
 		case errors.Is(e, context.DeadlineExceeded):

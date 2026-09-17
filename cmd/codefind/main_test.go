@@ -56,7 +56,7 @@ func TestHelpExplainsPathRangeAndUnknown(t *testing.T) {
 	if code != 0 {
 		t.Fatal(code)
 	}
-	for _, want := range []string{"单个文件", "!前缀", "--range", "unknown", "10s", "第一簿"} {
+	for _, want := range []string{"单个文件", "!前缀", "--range", "unknown", "10s", "next_path"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q in %s", want, text)
 		}

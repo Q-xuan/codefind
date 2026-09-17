@@ -57,7 +57,7 @@ func TestCLIEndToEnd(t *testing.T) {
 		t.Fatal(got)
 	}
 	help := string(invoke([]string{"--help-xlsx"}, 0))
-	for _, want := range []string{"--range", "--field", "unknown", "10s"} {
+	for _, want := range []string{"--range", "--field", "unknown", "10s", "next_path"} {
 		if !bytes.Contains([]byte(help), []byte(want)) {
 			t.Fatalf("help-xlsx missing %s: %s", want, help)
 		}
