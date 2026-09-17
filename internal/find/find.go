@@ -124,7 +124,10 @@ type rawMatch struct {
 
 type normalizedRequest struct {
 	Request
-	root string
+	root     string
+	includes []string
+	excludes []string
+	dirScope bool
 }
 
 func Find(ctx context.Context, request Request) (Result, error) {
@@ -191,7 +194,7 @@ func Find(ctx context.Context, request Request) (Result, error) {
 			budgetExceeded = true
 			break
 		}
-		rows, truncated, first, err := runRG(searchCtx, normalized.root, normalized.Paths, group.name, group.items, normalized.Encoding, normalized.Languages, remaining, started)
+		rows, truncated, first, err := runRG(searchCtx, normalized.root, normalized.includes, normalized.excludes, group.name, group.items, normalized.Encoding, normalized.Languages, remaining, started)
 		result.Metrics.RGCalls++
 		if result.Metrics.FirstAnchorMS == nil && first != nil {
 			result.Metrics.FirstAnchorMS = first
@@ -298,28 +301,34 @@ func normalizeRequest(request Request) (normalizedRequest, error) {
 	if len(request.Paths) == 0 {
 		request.Paths = []string{"."}
 	}
-	paths := make([]string, 0, len(request.Paths))
+	includes := make([]string, 0, len(request.Paths))
+	excludes := make([]string, 0)
+	echo := make([]string, 0, len(request.Paths))
+	dirScope := false
 	for _, value := range request.Paths {
-		if filepath.IsAbs(value) {
-			return normalizedRequest{}, fmt.Errorf("search path 必须是 root-relative: %s", value)
-		}
-		clean := filepath.Clean(value)
-		if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-			return normalizedRequest{}, fmt.Errorf("search path 逃逸 root: %s", value)
-		}
-		physical, err := filepath.EvalSymlinks(filepath.Join(root, clean))
+		rel, exclude, isDir, err := normalizeSearchPath(root, value, request.Format)
 		if err != nil {
-			return normalizedRequest{}, fmt.Errorf("解析 search path %s: %w", value, err)
+			return normalizedRequest{}, err
 		}
-		if !inside(root, physical) {
-			return normalizedRequest{}, fmt.Errorf("search path 物理路径逃逸 root: %s", value)
+		if exclude {
+			excludes = append(excludes, rel)
+			echo = append(echo, "!"+rel)
+			continue
 		}
-		if stat, err := os.Stat(physical); err != nil || !stat.IsDir() {
-			return normalizedRequest{}, fmt.Errorf("search path 不是目录: %s", value)
+		if isDir {
+			dirScope = true
 		}
-		paths = append(paths, filepath.ToSlash(clean))
+		includes = append(includes, rel)
+		echo = append(echo, rel)
 	}
-	request.Paths = cleanList(paths)
+	if len(includes) == 0 {
+		includes = []string{"."}
+		echo = append([]string{"."}, echo...)
+		dirScope = true
+	}
+	request.Paths = cleanList(echo)
+	includes = cleanList(includes)
+	excludes = cleanList(excludes)
 
 	if request.MaxAnchors == 0 {
 		request.MaxAnchors = defaultMaxAnchors
@@ -339,10 +348,62 @@ func normalizeRequest(request Request) (normalizedRequest, error) {
 	if request.Timeout < time.Millisecond || request.Timeout > maxAllowedTimeout {
 		return normalizedRequest{}, fmt.Errorf("timeout 必须在 1ms..%s", maxAllowedTimeout)
 	}
-	return normalizedRequest{Request: request, root: root}, nil
+	return normalizedRequest{Request: request, root: root, includes: includes, excludes: excludes, dirScope: dirScope}, nil
 }
 
-func runRG(ctx context.Context, root string, paths []string, group string, patterns []string, encoding string, languages []string, maxMatches int, started time.Time) ([]rawMatch, bool, *int64, error) {
+func normalizeSearchPath(root, value, format string) (string, bool, bool, error) {
+	value = strings.TrimSpace(value)
+	exclude := false
+	if strings.HasPrefix(value, "!") {
+		exclude = true
+		value = strings.TrimSpace(strings.TrimPrefix(value, "!"))
+	}
+	if value == "" {
+		return "", false, false, errors.New("search path 不能为空")
+	}
+	if filepath.IsAbs(value) {
+		return "", false, false, fmt.Errorf("search path 必须是 root-relative: %s", value)
+	}
+	clean := filepath.Clean(value)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", false, false, fmt.Errorf("search path 逃逸 root: %s", value)
+	}
+	rel := filepath.ToSlash(clean)
+	if exclude && rel == "." {
+		return "", false, false, errors.New("不能排除整个 root（!.）")
+	}
+	physical, err := filepath.EvalSymlinks(filepath.Join(root, clean))
+	if err != nil {
+		return "", false, false, fmt.Errorf("解析 search path %s: %w", value, err)
+	}
+	if !inside(root, physical) {
+		return "", false, false, fmt.Errorf("search path 物理路径逃逸 root: %s", value)
+	}
+	stat, err := os.Stat(physical)
+	if err != nil {
+		return "", false, false, fmt.Errorf("search path 不可读: %s", value)
+	}
+	if !stat.IsDir() && !stat.Mode().IsRegular() {
+		return "", false, false, fmt.Errorf("search path 必须是目录或普通文件: %s", value)
+	}
+	if !exclude && format == "xlsx" && stat.Mode().IsRegular() && !strings.EqualFold(filepath.Ext(physical), ".xlsx") {
+		return "", false, false, fmt.Errorf("xlsx path 必须是目录或 .xlsx 文件: %s", value)
+	}
+	return rel, exclude, stat.IsDir(), nil
+}
+
+func pathExcluded(rel string, excludes []string) bool {
+	rel = filepath.ToSlash(rel)
+	for _, ex := range excludes {
+		ex = strings.TrimSuffix(filepath.ToSlash(ex), "/")
+		if rel == ex || strings.HasPrefix(rel, ex+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func runRG(ctx context.Context, root string, paths []string, excludes []string, group string, patterns []string, encoding string, languages []string, maxMatches int, started time.Time) ([]rawMatch, bool, *int64, error) {
 	groupCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -359,6 +420,9 @@ func runRG(ctx context.Context, root string, paths []string, group string, patte
 	}
 	for _, glob := range searchGlobs(languages) {
 		args = append(args, "--glob", glob)
+	}
+	for _, ex := range excludes {
+		args = append(args, "--glob", "!"+filepath.ToSlash(ex))
 	}
 	for _, pattern := range patterns {
 		args = append(args, "-e", pattern)

@@ -132,6 +132,58 @@ func TestFindRejectsPathEscape(t *testing.T) {
 	}
 }
 
+func TestFindPathNamesSingleFile(t *testing.T) {
+	requireRG(t)
+	root := makeRepo(t, map[string]string{
+		"keep.go": "package p\nfunc Target() {}\n",
+		"skip.go": "package p\nfunc Target() {}\n",
+	})
+	result, err := Find(context.Background(), Request{Root: root, Symbols: []string{"Target"}, Paths: []string{"keep.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusCandidatesFound || !hasPath(result.Anchors, "keep.go") || hasPath(result.Anchors, "skip.go") {
+		t.Fatalf("named file path leaked other files: %+v", result)
+	}
+	if len(result.Query.Paths) != 1 || result.Query.Paths[0] != "keep.go" {
+		t.Fatalf("query.paths=%v", result.Query.Paths)
+	}
+}
+
+func TestFindPathExcludesFile(t *testing.T) {
+	requireRG(t)
+	root := makeRepo(t, map[string]string{
+		"keep.go": "package p\nfunc Target() {}\n",
+		"skip.go": "package p\nfunc Target() {}\n",
+	})
+	result, err := Find(context.Background(), Request{Root: root, Symbols: []string{"Target"}, Paths: []string{"!skip.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusCandidatesFound || !hasPath(result.Anchors, "keep.go") || hasPath(result.Anchors, "skip.go") {
+		t.Fatalf("exclude failed: %+v", result)
+	}
+	if !contains(result.Query.Paths, ".") || !contains(result.Query.Paths, "!skip.go") {
+		t.Fatalf("query.paths=%v", result.Query.Paths)
+	}
+}
+
+func TestFindRejectsTimeoutAbove10s(t *testing.T) {
+	root := makeRepo(t, map[string]string{"main.go": "package main\n"})
+	_, err := Find(context.Background(), Request{Root: root, Terms: []string{"main"}, Timeout: 20 * time.Second})
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFindRejectsExcludeRoot(t *testing.T) {
+	root := makeRepo(t, map[string]string{"main.go": "package main\n"})
+	_, err := Find(context.Background(), Request{Root: root, Terms: []string{"main"}, Paths: []string{"!."}})
+	if err == nil || !strings.Contains(err.Error(), "排除") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestFindTreatsDashPrefixedPathAsPath(t *testing.T) {
 	requireRG(t)
 	root := makeRepo(t, map[string]string{"--json/config.go": "package config\nfunc LoadConfiguration() {}\n"})

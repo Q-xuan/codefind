@@ -226,6 +226,15 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 		return ctx.Err()
 	}
 	e = walkWorkbook(ctx, file, nil, workbookVisitor{sheet: req.Sheet,
+		wantRow: func(r int) bool {
+			for _, b := range boxes {
+				if r >= b.r1 && r <= b.r2 {
+					return true
+				}
+			}
+			return false
+		},
+		wantCell: selectedRange,
 		cell: func(_ string, c xlsxCell) error {
 			if e := tick(); e != nil {
 				return e
@@ -241,15 +250,16 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 			return nil
 		},
 		comment: func(_, ref, text string) error {
+			if !selectedRange(ref) {
+				return nil
+			}
 			if e := tick(); e != nil {
 				return e
 			}
-			if selectedRange(ref) {
-				v := cells[ref]
-				v.Cell = ref
-				v.Comment = &text
-				cells[ref] = v
-			}
+			v := cells[ref]
+			v.Cell = ref
+			v.Comment = &text
+			cells[ref] = v
 			return nil
 		},
 		merge: func(_, ref string) error {
