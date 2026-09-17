@@ -5,11 +5,11 @@
 
 [English](README.md) | 简体中文
 
-本地预发布版本：**0.2.0-rc.1**。兼容性见 [JSON 契约](docs/json-contract.md)，发布状态见 [检查清单](RELEASE_CHECKLIST.md)。下方公开安装命令使用已发布 revision，不保证已经包含本地候选版本。
+本地候选版本：**0.2.0-rc.2**（0.2.0-rc.1 之后的工作树）。兼容性见 [JSON 契约](docs/json-contract.md)，发布状态见 [检查清单](RELEASE_CHECKLIST.md)。下方公开安装命令使用已发布 revision，不保证已经包含本地候选版本。
 
-`codefind` 是一个面向游戏项目、供 AI Coding Agent 使用的有预算业务线索发现 CLI。它跨 Go 源码、Proto 协议、CSV / YAML 配置和 Markdown 文档搜索玩法名称、配置 ID、历史别名及候选符号，不依赖代码建图。
+`codefind` 是一个面向游戏项目、供 AI Coding Agent 使用的有预算业务线索发现 CLI。它跨 Go 源码、Proto 协议、CSV / TSV / YAML 配置和 Markdown 文档搜索玩法名称、配置 ID、历史别名及候选符号，不依赖代码建图。
 
-文本模式使用至多两次受限的 [`rg`](https://github.com/BurntSushi/ripgrep) 字面量搜索；XLSX 模式原生读取工作簿。两者均返回少量可继续回读的位置证据，帮助 Agent 缩小阅读范围。
+文本模式使用受限的 [`rg`](https://github.com/BurntSushi/ripgrep) 字面量搜索（terms / symbols 各至多一次；`auto` 遇到非法 UTF-8 的 csv/tsv 时可再补一轮）。XLSX 模式原生读取工作簿，不调用 rg。两者均返回少量可继续回读的位置证据，帮助 Agent 缩小阅读范围。
 
 它的职责是缩小后续阅读范围，而不是判断功能是否存在。`codefind` 不是 Code Graph，也不建立语义边。
 
@@ -22,7 +22,7 @@
 - **直接读取当前落盘内容**：适合 Agent 在修改玩法逻辑前，先定位实现、测试和数据线索。
 - **保留证据边界**：共同命中不证明业务关联，零命中不证明功能不存在；候选仍需回读确认。
 
-当前更适合以 Go 为主要逻辑语言、配合 Proto 和 CSV / YAML 的游戏项目；并不覆盖所有游戏引擎语言或二进制资产，也不替代类型感知的调用图和影响分析。
+当前更适合以 Go 为主要逻辑语言、配合 Proto 和 CSV / TSV / YAML 的游戏项目；并不覆盖所有游戏引擎语言或二进制资产，也不替代类型感知的调用图和影响分析。
 
 ## 核心特点
 
@@ -55,13 +55,13 @@ codefind --root ./design/math --format xlsx --term Pvp --term "挑战券" --time
 
 ### 先取证，再理解
 
-codefind 不预先建图或建立向量索引：它直接搜索当前落盘文本，把查询范围、候选筛选和输出预算交给工具，把业务理解和下一步探索留给 Agent。建议采用“搜索 → 回读 → 根据新线索再次搜索”的循环；最多两次 rg 是单次请求的限制，不代表整个调查已完成。
+codefind 不预先建图或建立向量索引：它直接搜索当前落盘文本，把查询范围、候选筛选和输出预算交给工具，把业务理解和下一步探索留给 Agent。建议采用“搜索 → 回读 → 根据新线索再次搜索”的循环；单次请求的 rg 预算只约束这一次调用，不代表整个调查已完成。
 
 例如，先在文档里搜索玩法名，回读确认配置 ID，再在已授权的配置目录里查询该 ID。共同命中只是候选证据，不代表工具已经证明跨文件业务关系。
 
 ### 搜索与候选输出
 
-- 单次进程调用，内部最多执行两次 `rg`：一组搜索领域词，一组搜索候选 symbol/test 名称。
+- 单次进程调用。内容搜索仍是 terms / symbols 各至多一次 `rg`；`auto` 可对非法 UTF-8 的 csv/tsv 再补一轮 `gb18030`，计入 `rg_calls`。
 - 所有模式均通过 `rg --fixed-strings` 按字面量处理，不解释为正则表达式或 shell 代码。
 - 显式限制原始匹配数、投影锚点数和总耗时。
 - 用单行 JSON 返回仓库相对路径和行号。
@@ -74,7 +74,7 @@ codefind 不预先建图或建立向量索引：它直接搜索当前落盘文�
 ## 依赖
 
 - 从源码构建需要 Go 1.22 或更高版本
-- 运行时需要 `rg`（ripgrep）位于 `PATH`
+- 文本模式运行时需要 `rg`（ripgrep）位于 `PATH`。XLSX 搜索和 `codefind read` 不需要 rg。
 
 可以先检查依赖：
 
@@ -122,7 +122,7 @@ codefind --root ./game-project --lang all --term "reward"
 | JavaScript | js（别名 javascript） | .js、.jsx、.mjs、.cjs |
 | TypeScript | ts（别名 typescript） | .ts、.tsx、.mts、.cts |
 
-语言选择只限制源码类型，仍搜索 Proto、Markdown、CSV、YAML；`--path` 可继续缩小目录范围。JS minified 文件、vendor 和 node_modules 继续排除。不识别的语言报 invalid_request，xlsx 模式拒绝 --lang。`query.languages` 返回去重、规范化后的实际语言列表；xlsx 返回空列表。
+语言选择只限制源码类型，仍搜索 Proto、Markdown、CSV、TSV、YAML；`--path` 可继续缩小目录范围。JS minified 文件、vendor 和 node_modules 继续排除。不识别的语言报 invalid_request，xlsx 模式拒绝 --lang。`query.languages` 返回去重、规范化后的实际语言列表；xlsx 返回空列表。树上已有的 `--lang` 为 go / lua / csharp / c / cpp / js / ts。
 
 除 Go 外均为字面量源码候选，不标注 AST、定义或调用关系；`source` 在这些语言中仅表示源码文本，测试目录内归为 `test`。Go 保留原有 AST 证据。不新增编译器、索引或语言服务，所有语言共享原有搜索次数与预算。
 
@@ -188,18 +188,18 @@ codefind --root .\game-project `
 
 ### 配置表编码
 
-默认 `auto` 沿用 rg 的编码行为（含 BOM 检测），不自动猜测 GBK，也不会在零命中后更换编码重试。GBK 策划表可显式指定：
+`auto` 沿用 rg 的 UTF-8/BOM 默认行为；**仅**当 csv/tsv 无法按 UTF-8 解释时，再追加一次 `gb18030`。不会在零命中后改写整棵树。源码、YAML、Markdown 仍当 UTF-8。混合树要稳定复现时继续显式 `--encoding`，或分次查询。显式 `utf-8` / `gbk` / `gb18030` 不回退。
 
 ```sh
 codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 ```
 
-编码作用于本次请求的所有搜索目录；UTF-8 源码与 GBK 配置表应分次查询。查询词及 JSON 输出仍使用 Unicode / UTF-8，目标文件不会被转码或修改。Go AST 仍按 Go 源文件规则解析，非 UTF-8 Go 文件解析失败时保持纯文本候选。结果的 `query.encoding` 记录规范化后的所选编码，而不是对每个文件编码的检测结论。
+查询词及 JSON 输出仍使用 Unicode / UTF-8，目标文件不会被转码或修改。Go AST 仍按 Go 源文件规则解析，非 UTF-8 Go 文件解析失败时保持纯文本候选。`query.encoding` 是请求选项；`query.encoding_applied` 是实际取证用过的编码列表（`["auto"]` 或 `["auto","gb18030"]`）；`metrics.encoding_retries` 只能是 `0` 或 `1`。
 
 每个合法请求都会向 stdout 输出一行 `codefind-result-v1` JSON：
 
 ```json
-{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.2.0-rc.1","status":"candidates_found","query":{"format":"text","encoding":"auto","terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"],"syntax":{"role":"definition","symbol":"LoadConfig","authority":"go_ast_syntax"}}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false,"syntax_files_parsed":1,"syntax_anchors":1,"syntax_parse_errors":0,"syntax_files_skipped":0},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
+{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.2.0-rc.2","status":"candidates_found","query":{"languages":["go"],"format":"text","encoding":"auto","encoding_applied":["auto"],"terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"],"syntax":{"role":"definition","symbol":"LoadConfig","authority":"go_ast_syntax"}}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false,"syntax_files_parsed":1,"syntax_anchors":1,"syntax_parse_errors":0,"syntax_files_skipped":0,"encoding_retries":0},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
 ```
 
 ### 结果字段
@@ -208,7 +208,9 @@ codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 - `engine` / `version`：输出工具和 CLI 版本。
 - `status`：机器可判定的结果状态。
 - `query`：清理、去重后实际使用的词、符号和搜索目录。
-- `query.encoding`：本次采用的文件编码选项，默认 `auto`。
+- `query.encoding`：本次采用的文件编码选项，默认 `auto`，不是逐文件检测结论。
+- `query.encoding_applied`：实际用于取证的编码列表，去重。
+- `metrics.encoding_retries`：`0` 或 `1`。主搜索已 `budget_exceeded`，或全部 csv/tsv 都是合法 UTF-8 时不补搜。
 - `anchors`：预算内的候选位置；`path` 始终相对 `root`。可选 `syntax` 是 `go/ast` 提供的语法级证据，不是类型解析关系。
 - `unknowns`：当前结果不能回答的事项，绝不能解释为否定结论。
 - `metrics`：调用次数、耗时、原始匹配、投影锚点、截断状态和受限 Go 语法解析计数。没有观察到锚点时，`first_anchor_ms` 为 `null`。
@@ -234,7 +236,7 @@ codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 | `source` | Go 声明，或其他所选语言的普通源码候选（不证明定义） |
 | `consumer` | 其他源码使用位置和调用点 |
 | `protocol` | Protocol Buffers 定义 |
-| `config` | CSV 或 YAML 配置 |
+| `config` | CSV、TSV 或 YAML 配置 |
 | `docs` | Markdown 文档 |
 | `generated` | 可识别的 Go 生成文件 |
 
@@ -244,7 +246,7 @@ codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 
 预算是结果 Contract 的一部分：
 
-- 只有 `--term` 时执行一次 `rg`；只有 `--symbol` 时也执行一次；两组都有时最多执行两次。
+- 只有 `--term` 时执行一次内容 `rg`；只有 `--symbol` 时也执行一次；两组都有时最多两次内容搜索。`auto` 可再加一轮 csv/tsv 编码补搜，计入 `rg_calls`。
 - `--max-matches` 限制从 `rg` 读取的原始匹配；`--max-anchors` 限制投影后的响应数量。
 - 达到时间或原始匹配预算时返回 `budget_exceeded`。
 - 投影和去重可能缩小输出，但这本身不表示预算耗尽。
@@ -256,7 +258,7 @@ codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 
 ## 默认搜索范围
 
-`text` 模式默认搜索 Go、Protocol Buffers、Markdown、CSV 和 YAML；`--lang` 可选择额外支持的源码语言。默认排除 `.git`、`vendor`、`node_modules` 与 minified JavaScript。`xlsx` 模式的范围规则见上文。它不会自动扩大调用方通过 `--path` 提供的目录范围。
+`text` 模式默认搜索 Go、Protocol Buffers、Markdown、CSV、TSV 和 YAML；`--lang` 可选择树上已有的源码语言（lua / csharp / c / cpp / js / ts）。默认排除 `.git`、`vendor`、`node_modules` 与 minified JavaScript。`xlsx` 模式的范围规则见上文。它不会自动扩大调用方通过 `--path` 提供的目录范围。
 
 每次请求只接受一个 `--root`。多个仓库或普通目录位于同一授权根目录下时，可以通过多个 `--path` 搜索；不支持一次指定任意分散的多个根目录。搜索仍遵循适用的 `.gitignore` 等 ripgrep 忽略规则，不保证枚举根目录下的所有文件。
 
@@ -270,7 +272,7 @@ codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 
 ## 非目标
 
-以下能力明确不属于 `codefind` v0.1.x：
+以下能力明确不属于当前版本：
 
 - Code Graph、调用图或语义边
 - 类型解析后的 receiver、interface dispatch、reflection 或运行时调用结论；`go_ast_syntax` 只描述源码语法
@@ -282,7 +284,7 @@ codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 
 ## 开发与验证
 
-游戏场景回归覆盖源码、协议、CSV / YAML、文档、生成代码、数字 ID 排序，以及非 Git 目录下分两次查询的范围约束：
+游戏场景回归覆盖源码、协议、CSV / TSV / YAML、文档、生成代码、数字 ID 排序，以及非 Git 目录下分两次查询的范围约束：
 
 ```sh
 go test ./internal/find -run TestGame -count=1 -v

@@ -2,7 +2,19 @@
 
 ## Unreleased
 
-- Add opt-in Lua, C#, C/C++, JavaScript and TypeScript lexical search through repeatable --lang; --lang all selects every supported language. Default Go scope and domain evidence remain unchanged; only Go receives AST enrichment.
+Local candidate after 0.2.0-rc.1; no remote tag or public release is implied. Binary `Version` is `0.2.0-rc.2`.
+
+### Added
+
+- Record already-in-tree lexical `--lang` values in the shipped candidate notes: lua, csharp, c, cpp, js, ts. `--lang all` selects every supported language. Default Go scope and domain evidence remain unchanged; only Go receives AST enrichment.
+- `auto` encoding: if an authorized `*.csv` / `*.tsv` is not valid UTF-8, run one additional `rg --encoding gb18030` limited to those globs. No whole-tree retry. Explicit `utf-8` / `gbk` / `gb18030` do not fall back. Main-search `budget_exceeded` skips the retry.
+- Additive contract fields: `query.encoding_applied` and `metrics.encoding_retries` (`0` or `1`). `query.encoding` stays the request option.
+- Treat `*.tsv` as domain evidence and `kind: config`, matching CSV.
+
+### Changed
+
+- README / json-contract / CLI `--encoding` help now describe the csv/tsv fallback instead of “auto never guesses”.
+- Non-goals heading refers to the current version, not v0.1.x.
 
 ## [0.2.0-rc.1] - 2026-09-07
 

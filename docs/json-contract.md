@@ -1,10 +1,12 @@
-# JSON contract: v0.2.0-rc.1
+# JSON contract: v0.2.0-rc.2
 
 ## Compatibility
 
-Unreleased addition: `query.languages` echoes normalized source-language selection (default ["go"], empty for xlsx). `--lang` is repeatable; Proto/config/docs remain available. Non-Go `source` anchors are lexical locations, not declarations or syntax relationships. No new syntax authority is introduced.
+`query.languages` echoes normalized source-language selection already in tree (default `["go"]`, empty for xlsx). Supported values: go, lua, csharp, c, cpp, js, ts, plus `all`. `--lang` is repeatable; Proto / Markdown / CSV / TSV / YAML remain available. Non-Go `source` anchors are lexical locations, not declarations or syntax relationships. No new syntax authority is introduced.
 
-The default remains text search. `codefind-result-v1` retains positive physical `line` numbers for text anchors. New `query.format` and `query.encoding` fields are additive. Consumers must ignore unknown fields and dispatch by schema plus format, not human-readable messages or exact JSON key order.
+The default remains text search. `codefind-result-v1` retains positive physical `line` numbers for text anchors. `query.format`, `query.encoding`, `query.encoding_applied` and `metrics.encoding_retries` are additive. Consumers must ignore unknown fields and dispatch by schema plus format, not human-readable messages or exact JSON key order. A csv/tsv encoding retry does not add a new `status`.
+
+`query.encoding` is the request option (`auto` / `utf-8` / `gbk` / `gb18030`). It is not a detection conclusion. `query.encoding_applied` is the de-duplicated list actually used: `["auto"]` after the main search only; `["auto","gb18030"]` after a fallback; explicit encodings echo themselves. `metrics.encoding_retries` is `0` or `1`.
 
 XLSX search is explicitly requested by `--format xlsx`: its anchors use `workbook.sheet/cell/source` and omit `line`. Do not pass these anchors to an old text-only validator. `source` is cell or comment. Cached formula results may be stale. Search output is a shortlist, not proof of absence or a semantic relation.
 
@@ -32,3 +34,11 @@ Help and version are plain text. Unknown flags, malformed values and extra posit
 - Multi-file raw matching still obeys global budgets: symbols can consume the text budget before terms; XLSX ordering cannot recover candidates never scanned.
 
 The release's compiled-executable E2E checks search → returned location → read, truncation, error JSON and source hash preservation. Remote platform CI is a separate release gate.
+
+## Adapter notes
+
+1. Read `schema_version` and `status` first, then `query.format`.
+2. `query.encoding == auto` is not “detected as UTF-8”. Use `encoding_applied`.
+3. `no_candidates` after a retry is still unknown; do not treat it as “the field is absent” or “every encoding was exhausted”.
+4. Non-Go `source` anchors are lexical text locations. Use a language service when a definition jump is required.
+5. Old adapters that only read `query.encoding` and `status` remain valid if they ignore unknown keys.
