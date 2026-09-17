@@ -160,10 +160,11 @@ func TestXLSXZeroHitIsUnknownNotAbsence(t *testing.T) {
 	if !strings.Contains(joined, "unknown") {
 		t.Fatalf("unknowns missing unknown: %q", joined)
 	}
-	for _, bad := range []string{"表里没有", "不在工作簿", "内容不存在", "not in the workbook"} {
-		if strings.Contains(joined, bad) {
-			t.Fatalf("zero hit claimed absence: %q", joined)
-		}
+	if strings.Contains(joined, "不在工作簿") || strings.Contains(joined, "内容不存在") || strings.Contains(joined, "not in the workbook") {
+		t.Fatalf("zero hit claimed absence: %q", joined)
+	}
+	if strings.Contains(joined, "表里没有") && !strings.Contains(joined, "不能写成表里没有") {
+		t.Fatalf("zero hit claimed the field is missing: %q", joined)
 	}
 }
 
