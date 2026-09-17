@@ -41,7 +41,7 @@ func run(args []string, stdout, stderr io.Writer, search func(context.Context, f
 	var languages listFlag
 	root := flag.String("root", "", "要搜索的仓库根目录")
 	format := flag.String("format", "text", "搜索格式：text 或 xlsx")
-	encoding := flag.String("encoding", "auto", "文件编码：auto、utf-8、gbk、gb18030；auto 不猜测 GBK")
+	encoding := flag.String("encoding", "auto", "文件编码：auto、utf-8、gbk、gb18030；auto 仅对非法 UTF-8 的 csv/tsv 追加一次 gb18030")
 	maxAnchors := flag.Int("max-anchors", 12, "最多输出多少个候选锚点")
 	maxMatches := flag.Int("max-matches", 2000, "最多扫描多少条原始匹配")
 	timeout := flag.Duration("timeout", 2*time.Second, "本次搜索总超时")

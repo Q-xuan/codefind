@@ -56,6 +56,20 @@ func TestCLIEndToEnd(t *testing.T) {
 	if got := string(bytes.TrimSpace(invoke([]string{"--version"}, 0))); got != find.Version {
 		t.Fatal(got)
 	}
+	textRoot := t.TempDir()
+	if e := os.WriteFile(filepath.Join(textRoot, "awards.csv"), []byte("id,\xbd\xb1\xc0\xf8\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	var text find.Result
+	if e := json.Unmarshal(invoke([]string{"--root", textRoot, "--term", "奖励", "--encoding", "auto"}, 0), &text); e != nil {
+		t.Fatal(e)
+	}
+	if text.Status != find.StatusCandidatesFound || text.Query.Encoding != "auto" || text.Metrics.EncodingRetries != 1 || len(text.Query.EncodingApplied) != 2 || text.Query.EncodingApplied[1] != "gb18030" {
+		t.Fatalf("text=%+v", text)
+	}
+	if len(text.Anchors) != 1 || text.Anchors[0].Path != "awards.csv" || text.Anchors[0].Kind != "config" {
+		t.Fatalf("text anchors=%+v", text.Anchors)
+	}
 	root := t.TempDir()
 	var buf bytes.Buffer
 	z := zip.NewWriter(&buf)

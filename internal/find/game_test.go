@@ -14,15 +14,16 @@ func TestGameDiscoveryAcrossContent(t *testing.T) {
 		"server/arena_test.go":     "package arena\nfunc TestClaimArenaReward() {}\n",
 		"shared/proto/arena.proto": "message ClaimArenaRewardRequest {}\n",
 		"balance/rewards.csv":      "id,name\n100126,arena_reward\n",
+		"balance/rewards.tsv":      "id\tname\n100126\tarena_reward\n",
 		"operations/arena.yaml":    "arena_reward: true\n",
 		"shared/proto/arena.md":    "# arena_reward protocol notes\n",
 		"shared/proto/arena.pb.go": "package proto\n// ClaimArenaReward generated\n",
 	})
-	result, err := Find(context.Background(), Request{Root: root, Terms: []string{"arena_reward", "100126"}, Symbols: []string{"ClaimArenaReward"}, MaxAnchors: 7})
+	result, err := Find(context.Background(), Request{Root: root, Terms: []string{"arena_reward", "100126"}, Symbols: []string{"ClaimArenaReward"}, MaxAnchors: 8})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"server/arena.go": "source", "server/arena_test.go": "test", "shared/proto/arena.proto": "protocol", "balance/rewards.csv": "config", "operations/arena.yaml": "config", "shared/proto/arena.md": "docs", "shared/proto/arena.pb.go": "generated"}
+	want := map[string]string{"server/arena.go": "source", "server/arena_test.go": "test", "shared/proto/arena.proto": "protocol", "balance/rewards.csv": "config", "balance/rewards.tsv": "config", "operations/arena.yaml": "config", "shared/proto/arena.md": "docs", "shared/proto/arena.pb.go": "generated"}
 	for _, a := range result.Anchors {
 		if kind, ok := want[a.Path]; ok && a.Kind == kind {
 			delete(want, a.Path)
@@ -63,6 +64,7 @@ func TestGameNumericBoundaries(t *testing.T) {
 func TestGameClassificationUsesFileType(t *testing.T) {
 	for _, tc := range []struct{ path, text, kind string }{
 		{"tests/reward.yaml", "enabled: true", "config"},
+		{"balance/rewards.tsv", "100126\tarena_reward", "config"},
 		{"proto/readme.md", "# Protocol", "docs"},
 		{"shared/proto/handler.go", "func Handle() {}", "source"},
 		{"tests/arena.go", "func Check() {}", "test"},
@@ -84,5 +86,38 @@ func TestGameFollowUpStaysInScope(t *testing.T) {
 	next, err := Find(context.Background(), Request{Root: root, Paths: []string{"balance"}, Terms: []string{"100126"}})
 	if err != nil || len(next.Anchors) != 1 || next.Anchors[0].Path != "balance/rewards.csv" {
 		t.Fatalf("next=%+v err=%v", next, err)
+	}
+}
+
+func TestGameTSVNumericIDMatchesCSV(t *testing.T) {
+	requireRG(t)
+	root := makeRepo(t, map[string]string{
+		"balance/a.tsv": "id\tname\n11001260\tother\n",
+		"balance/z.tsv": "id\tname\n100126\tarena_reward\n",
+	})
+	result, err := Find(context.Background(), Request{Root: root, Terms: []string{"100126"}, MaxAnchors: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Anchors) != 1 || result.Anchors[0].Path != "balance/z.tsv" || result.Anchors[0].Kind != "config" {
+		t.Fatalf("anchors=%+v", result.Anchors)
+	}
+}
+
+func TestGameMixedUTF8GoAndGBKCSV(t *testing.T) {
+	requireRG(t)
+	root := makeRepo(t, map[string]string{
+		"server/arena.go":    "package arena\nconst Reward = \"奖励\"\n",
+		"balance/awards.csv": gbkReward,
+	})
+	result, err := Find(context.Background(), Request{Root: root, Terms: []string{"奖励"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusCandidatesFound || result.Metrics.EncodingRetries != 1 || result.Query.Encoding != "auto" {
+		t.Fatalf("result=%+v", result)
+	}
+	if !hasPath(result.Anchors, "server/arena.go") || !hasPath(result.Anchors, "balance/awards.csv") {
+		t.Fatalf("anchors=%+v", result.Anchors)
 	}
 }

@@ -9,7 +9,7 @@ import (
 
 func TestLanguageSelection(t *testing.T) {
 	requireRG(t)
-	files := map[string]string{"main.go": "package p\nfunc Target() {}\n", "rules.proto": "message Target {}\n", "docs/rules.md": "Target\n", "config/rules.yaml": "name: Target\n", "config/items.csv": "id,name\n1,Target\n", "node_modules/no.js": "Target\n", "vendor/no.lua": "Target\n", "bundle.min.js": "Target\n"}
+	files := map[string]string{"main.go": "package p\nfunc Target() {}\n", "rules.proto": "message Target {}\n", "docs/rules.md": "Target\n", "config/rules.yaml": "name: Target\n", "config/items.csv": "id,name\n1,Target\n", "config/items.tsv": "id\tname\n1\tTarget\n", "node_modules/no.js": "Target\n", "vendor/no.lua": "Target\n", "bundle.min.js": "Target\n"}
 	for _, lang := range sourceLanguages {
 		if lang.name == "go" {
 			continue
@@ -46,7 +46,7 @@ func TestLanguageSelection(t *testing.T) {
 					}
 				}
 			}
-			for _, p := range []string{"rules.proto", "docs/rules.md", "config/rules.yaml", "config/items.csv"} {
+			for _, p := range []string{"rules.proto", "docs/rules.md", "config/rules.yaml", "config/items.csv", "config/items.tsv"} {
 				if !hasPath(r.Anchors, p) {
 					t.Fatal("missing domain evidence", p)
 				}

@@ -5,11 +5,11 @@
 
 English | [简体中文](README_CN.md)
 
-Local prerelease: **0.2.0-rc.1**. See [JSON compatibility](docs/json-contract.md) and [release checks](RELEASE_CHECKLIST.md). Public installation commands below use published revisions and may not include this local candidate yet.
+Local candidate: **0.2.0-rc.2** (tree after 0.2.0-rc.1). See [JSON compatibility](docs/json-contract.md) and [release checks](RELEASE_CHECKLIST.md). Public installation commands below use published revisions and may not include this local candidate yet.
 
-`codefind` is a budget-aware discovery CLI for AI coding agents working on game projects. It searches gameplay names, configuration IDs, historical aliases, and candidate symbols across Go source, Proto definitions, CSV / YAML configuration, and Markdown documentation—without building a code graph.
+`codefind` is a budget-aware discovery CLI for AI coding agents working on game projects. It searches gameplay names, configuration IDs, historical aliases, and candidate symbols across Go source, Proto definitions, CSV / TSV / YAML configuration, and Markdown documentation—without building a code graph.
 
-Text mode uses at most two bounded [`rg`](https://github.com/BurntSushi/ripgrep) literal searches. XLSX mode reads workbook content natively. Both return a small set of candidate locations for follow-up reading.
+Text mode uses bounded [`rg`](https://github.com/BurntSushi/ripgrep) literal searches (one for terms and one for symbols, plus at most one csv/tsv encoding retry when `auto` sees invalid UTF-8). XLSX mode reads workbook content natively and does not call rg. Both return a small set of candidate locations for follow-up reading.
 
 Its job is to narrow the reading surface—not to decide whether a feature exists. `codefind` is not a Code Graph and does not build semantic edges.
 
@@ -22,7 +22,7 @@ Clues to a gameplay feature can span server logic, network protocols, balance ta
 - **Read current on-disk content**: locate implementation, tests, and data clues before an agent changes gameplay logic.
 - **Keep evidence boundaries explicit**: shared matches do not prove a business relationship, and zero hits do not prove absence. Candidates still require inspection.
 
-The current scope best fits games using Go for logic alongside Proto and CSV / YAML. It does not cover every game-engine language or binary asset, and does not replace type-aware call graphs or impact analysis.
+The current scope best fits games using Go for logic alongside Proto and CSV / TSV / YAML. It does not cover every game-engine language or binary asset, and does not replace type-aware call graphs or impact analysis.
 
 ## Highlights
 
@@ -55,13 +55,13 @@ Scope and limits:
 
 ### Evidence first, understanding next
 
-codefind does not prebuild a graph or vector index. It searches current on-disk text, leaving scope, candidate selection, and output budgets to the tool, and business understanding and further exploration to the agent. Use a search → read → search-again loop; the two-rg limit applies to one request, not the entire investigation.
+codefind does not prebuild a graph or vector index. It searches current on-disk text, leaving scope, candidate selection, and output budgets to the tool, and business understanding and further exploration to the agent. Use a search → read → search-again loop; the per-request rg budget applies to one request, not the entire investigation.
 
 For example, search documentation for a gameplay name, read the result to confirm a configuration ID, then query that ID inside authorized configuration directories. Shared matches are candidate evidence, not proven cross-file business relationships.
 
 ### Search and candidate output
 
-- One process call and at most two internal `rg` calls: one for domain terms, one for candidate symbol/test names.
+- One process call. Content search is still at most one `rg` call for terms and one for symbols. `auto` may add one csv/tsv `gb18030` retry, counted in `rg_calls`.
 - All patterns use `rg --fixed-strings`; they are never interpreted as regular expressions or shell code.
 - Explicit limits for raw matches, projected anchors, and total elapsed time.
 - Repository-relative paths and line numbers in a single-line JSON response.
@@ -74,7 +74,7 @@ For example, search documentation for a gameplay name, read the result to confir
 ## Requirements
 
 - Go 1.22 or newer to build from source
-- `rg` (ripgrep) available on `PATH` at runtime
+- `rg` (ripgrep) available on `PATH` for text mode. XLSX search and `codefind read` do not require rg.
 
 Check the dependencies with:
 
@@ -122,7 +122,7 @@ codefind --root ./game-project --lang all --term "reward"
 | JavaScript | js (alias javascript) | .js, .jsx, .mjs, .cjs |
 | TypeScript | ts (alias typescript) | .ts, .tsx, .mts, .cts |
 
-Language selection narrows source extensions, while Proto, Markdown, CSV and YAML remain searchable. Use `--path` to narrow directories. Minified JS, vendor and node_modules remain excluded. Unknown languages produce invalid_request; xlsx rejects --lang. `query.languages` echoes normalized, deduplicated languages (empty for xlsx).
+Language selection narrows source extensions, while Proto, Markdown, CSV, TSV and YAML remain searchable. Use `--path` to narrow directories. Minified JS, vendor and node_modules remain excluded. Unknown languages produce invalid_request; xlsx rejects --lang. `query.languages` echoes normalized, deduplicated languages (empty for xlsx). Already-in-tree `--lang` values are go / lua / csharp / c / cpp / js / ts.
 
 Non-Go results are lexical candidates without AST or definition/call claims: source means source text, and test directories are classified as test. Go keeps its existing AST enrichment. No compiler, index or language server is added; all languages share the existing call and resource budgets.
 
@@ -188,18 +188,18 @@ Provide at least one `--term` or `--symbol`. Repeat either flag to send multiple
 
 ### Configuration table encoding
 
-The default `auto` preserves rg's encoding behavior (including BOM detection); it does not guess GBK or retry with another encoding after zero hits. For GBK gameplay tables, specify:
+`auto` uses rg's default UTF-8/BOM behavior. It adds one `gb18030` pass only for csv/tsv files that are not valid UTF-8. It does not rewrite the whole tree after zero hits. Source, YAML and Markdown stay UTF-8. For a mixed tree that must reproduce the same way every time, keep using an explicit `--encoding` or split the query. Explicit `utf-8` / `gbk` / `gb18030` never fall back.
 
 ```sh
 codefind --root ./game-project --path data/tables --term "奖励" --encoding gbk
 ```
 
-Encoding applies to every search path in the request. Search UTF-8 source and GBK tables separately. Query patterns and JSON output remain Unicode / UTF-8; target files are never transcoded on disk or modified. Go AST parsing still follows Go source rules; non-UTF-8 Go files that fail parsing remain lexical candidates. `query.encoding` records the normalized selected option, not a detected encoding for each file.
+Query patterns and JSON output remain Unicode / UTF-8; target files are never transcoded on disk or modified. Go AST parsing still follows Go source rules; non-UTF-8 Go files that fail parsing remain lexical candidates. `query.encoding` is the request option. `query.encoding_applied` is the de-duplicated list actually used for evidence (`["auto"]` or `["auto","gb18030"]`). `metrics.encoding_retries` is `0` or `1`.
 
 Every valid request writes one line of `codefind-result-v1` JSON to stdout:
 
 ```json
-{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.2.0-rc.1","status":"candidates_found","query":{"format":"text","encoding":"auto","terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"],"syntax":{"role":"definition","symbol":"LoadConfig","authority":"go_ast_syntax"}}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false,"syntax_files_parsed":1,"syntax_anchors":1,"syntax_parse_errors":0,"syntax_files_skipped":0},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
+{"schema_version":"codefind-result-v1","engine":"codefind","version":"0.2.0-rc.2","status":"candidates_found","query":{"languages":["go"],"format":"text","encoding":"auto","encoding_applied":["auto"],"terms":["configuration"],"symbols":["LoadConfig"],"paths":["cmd","internal"]},"anchors":[{"kind":"source","path":"internal/config/load.go","line":12,"text":"func LoadConfig(path string) error {","groups":["symbols"],"syntax":{"role":"definition","symbol":"LoadConfig","authority":"go_ast_syntax"}}],"unknowns":[],"metrics":{"agent_calls":1,"rg_calls":2,"elapsed_ms":8,"first_anchor_ms":3,"raw_matches":4,"projected_anchors":1,"truncated":false,"syntax_files_parsed":1,"syntax_anchors":1,"syntax_parse_errors":0,"syntax_files_skipped":0,"encoding_retries":0},"limits":{"max_anchors":12,"max_matches":2000,"timeout_ms":2000},"external_writes":0}
 ```
 
 ### Result fields
@@ -208,7 +208,9 @@ Every valid request writes one line of `codefind-result-v1` JSON to stdout:
 - `engine` / `version`: producer identity and CLI version.
 - `status`: machine-readable result state.
 - `query`: normalized, de-duplicated terms, symbols, and search paths actually used.
-- `query.encoding`: selected file encoding option, defaulting to `auto`.
+- `query.encoding`: selected file encoding option, defaulting to `auto`. This is not a per-file detection result.
+- `query.encoding_applied`: encodings actually used for evidence, de-duplicated.
+- `metrics.encoding_retries`: `0` or `1`. A retry never happens after `budget_exceeded` or when every csv/tsv is valid UTF-8.
 - `anchors`: bounded candidate locations. `path` is always relative to `root`. Optional `syntax` is syntax-only evidence from `go/ast`, never a type-resolved relation.
 - `unknowns`: questions the current result cannot answer; never treat them as negative conclusions.
 - `metrics`: calls, elapsed time, raw matches, projected anchors, truncation, and bounded Go syntax parsing counts. `first_anchor_ms` is `null` when no anchor was observed.
@@ -234,7 +236,7 @@ The human-readable `text` and `unknowns` values may change. Branch on `schema_ve
 | `source` | Go declarations, or lexical source candidates in other selected languages (not proof of a definition) |
 | `consumer` | Other source usages and call sites |
 | `protocol` | Protocol Buffers definitions |
-| `config` | CSV or YAML configuration |
+| `config` | CSV, TSV or YAML configuration |
 | `docs` | Markdown documentation |
 | `generated` | Recognized generated Go files |
 
@@ -244,7 +246,7 @@ An invalid request, including malformed flags or unexpected positional arguments
 
 Budgets are part of the result contract:
 
-- Terms only: one `rg` call. Symbols only: one `rg` call. Both groups: at most two calls.
+- Terms only: one content `rg` call. Symbols only: one content `rg` call. Both groups: at most two content calls. `auto` may add one csv/tsv encoding retry, included in `rg_calls`.
 - `--max-matches` limits raw matches read from `rg`; `--max-anchors` limits the projected response.
 - Reaching the time or raw-match limit returns `budget_exceeded`.
 - Projection and de-duplication may reduce the response without exhausting a budget.
@@ -256,7 +258,7 @@ Budgets are part of the result contract:
 
 ## Default search scope
 
-`text` mode defaults to Go, Protocol Buffers, Markdown, CSV, and YAML; `--lang` selects additional supported source languages. It excludes `.git`, `vendor`, `node_modules`, and minified JavaScript by default. See above for `xlsx` traversal rules. Neither mode expands beyond the directories supplied through `--path`.
+`text` mode defaults to Go, Protocol Buffers, Markdown, CSV, TSV, and YAML; `--lang` selects additional supported source languages already in tree (lua / csharp / c / cpp / js / ts). It excludes `.git`, `vendor`, `node_modules`, and minified JavaScript by default. See above for `xlsx` traversal rules. Neither mode expands beyond the directories supplied through `--path`.
 
 Each request accepts one `--root`. Multiple repositories or ordinary directories under the same authorized root can be searched through repeated `--path` flags; arbitrary separate roots are not supported in one request. Applicable ripgrep ignore rules, including `.gitignore`, still apply, so not every file under the root is necessarily searched.
 
@@ -270,7 +272,7 @@ Each request accepts one `--root`. Multiple repositories or ordinary directories
 
 ## Non-goals
 
-The following are deliberately outside `codefind` v0.1.x:
+The following are deliberately outside the current version:
 
 - Code Graphs, call graphs, or semantic edges
 - Type-resolved receiver, interface-dispatch, reflection, or runtime-call claims; `go_ast_syntax` only describes source syntax
@@ -282,7 +284,7 @@ The following are deliberately outside `codefind` v0.1.x:
 
 ## Development
 
-Game regression scenarios cover source, protocols, CSV / YAML, documentation, generated code, numeric-ID ranking, and scoped follow-up queries in non-Git directories:
+Game regression scenarios cover source, protocols, CSV / TSV / YAML, documentation, generated code, numeric-ID ranking, and scoped follow-up queries in non-Git directories:
 
 ```sh
 go test ./internal/find -run TestGame -count=1 -v

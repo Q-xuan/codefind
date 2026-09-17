@@ -74,6 +74,13 @@ func TestLanguageFlags(t *testing.T) {
 	}
 }
 
+func TestEncodingHelpMentionsCSVFallback(t *testing.T) {
+	var out bytes.Buffer
+	if code := run([]string{"--help"}, &out, io.Discard, nil); code != 0 || !bytes.Contains(out.Bytes(), []byte("csv/tsv")) || !bytes.Contains(out.Bytes(), []byte("gb18030")) {
+		t.Fatalf("code=%d help=%s", code, out.String())
+	}
+}
+
 func TestEncodingFlag(t *testing.T) {
 	for _, value := range []string{"auto", "utf-8", "gbk", "gb18030"} {
 		code := run([]string{"--encoding", value}, io.Discard, io.Discard, func(_ context.Context, req find.Request) (find.Result, error) {
