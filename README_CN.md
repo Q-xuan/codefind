@@ -36,13 +36,13 @@ codefind --root ./design/math --format xlsx --term Pvp --term "挑战券" --time
 
 此模式不调用 rg，不要求安装 Excel，不建立索引。命中返回 `kind: config`、工作簿相对 `path`、`text`、`groups` 和 `workbook: {sheet, cell, source}`；`source` 为 `cell` 或 `comment`，不提供源码 `line`。同一位置的单元格和批注可分别命中；没有批注命中不表示没有批注。`query.format` 区分 `text` / `xlsx`。
 
-不知道内容在哪个文件时，直接搜索目录即可。`--path` 可以点名单个 `.xlsx`，或用 `!` 前缀排除（`--path '!合十_关卡数值.xlsx'`）。只有排除项时仍默认扫 `.`。7–9MB 大表会吃满整次请求；先点名或排除，不要先加 `--timeout`。timeout **上限仍是 10s**，`20s` 仍是 `invalid_request`。工具先读取受限的工作表名称元数据，按文件名和工作表名与查询词的匹配程度排序；名称匹配忽略大小写，仅用于排序，正文仍按大小写敏感的字面量搜索。没有名称线索时先扫描较小工作簿，不猜测玩法别名、不排除名称不匹配的文件。工作簿内部也优先扫描名称匹配的工作表。`codefind --help-xlsx` 说明 `--path`、`read` 的 field/range，以及零命中措辞。
+不知道文件名时，对目录跑一次即可。廉价发现按文件名、表名、共享字符串字面量排序（并列取较小文件），然后**只内容扫描第一簿**。其余文件保持 `pending`，`reason=deferred`，用 `--path` 点名下一簿。不要先排除 7–9MB 再扫剩下的目录——2–3MB 表同样会吃掉均分超时。`--path` 仍可点名单个 `.xlsx` 或 `!` 排除；点名多簿会全部内容扫描。timeout **上限仍是 10s**，`20s` 仍是 `invalid_request`。不做近义自动命中。名称/表名匹配忽略大小写且只影响排序；共享字符串提示和正文仍是大小写敏感字面量。提示未命中不会排除文件。选中的工作簿内部仍优先扫名称匹配的表。`codefind --help-xlsx` 说明目录冷启动、`read` 的 field/range，以及零命中措辞。
 
 输出候选采用两层轮询：在已命中的工作簿之间分配名额，每个工作簿内部再轮询已命中的工作表；同表内部保留原有相关性顺序。这样可减少单表重复命中挤占结果，但不保证所有表都能进入很小的输出预算。此策略只筛选已扫描到的候选，不增加扫描范围或预算；为保持来源多样性，跨表结果不保证严格按符号优先级排列。
 
-`workbook_coverage.files` 按扫描顺序列出已发现文件：`complete` 表示支持的内容已扫描完成，`partial` 表示未完成，`pending` 表示尚未开始。`reason` 区分 `file_timeout`、`total_timeout`、`match_limit`、`file_size_or_xml_limit`；`metadata_status` 单独报告名称元数据是否读取成功。`discovery_complete: false` 表示文件枚举本身受限，列表不是全部文件。这里的 complete 不代表 OCR、公式或业务理解已完成。
+`workbook_coverage.files` 按扫描顺序列出已发现文件：`complete` 表示支持的内容已扫描完成，`partial` 表示未完成，`pending` 表示尚未开始。`reason` 区分 `file_timeout`、`total_timeout`、`match_limit`、`file_size_or_xml_limit`，以及目录冷启动未选中的 `deferred`。`deferred` 不是超时，单独不会变成 `budget_exceeded`。`metadata_status` 单独报告名称元数据是否读取成功。`discovery_complete: false` 表示文件枚举本身受限，列表不是全部文件。这里的 complete 不代表 OCR、公式或业务理解已完成。
 
-元数据阶段最多使用总超时的 20%，每个工作簿元数据最多 50ms、XML 读取最多 1 MiB；读取失败只回退到文件名/大小排序，不丢弃候选。内容扫描单文件时间上限为总 timeout 除以 `min(发现文件数, 4)`，仍受剩余总时间约束。单文件时间或大小预算耗尽后继续其他文件；全局时间或匹配预算耗尽后停止。只要存在未完成扫描，就返回 `budget_exceeded`，即使已有命中或总时间尚有剩余。当前不提供断点续扫，重试会重新读取。
+元数据阶段最多使用总超时的 20%，每个工作簿最多 200ms、XML 读取最多 1 MiB（表名 + 共享字符串字面量提示）。读取失败只回退到文件名/大小排序，不丢弃候选。目录冷启动把剩余时间整段给选中的那一簿；显式点名的多簿仍按 `min(点名数, 4)` 均分。点名多簿时，单文件时间或大小预算耗尽后继续下一簿；全局时间或匹配预算耗尽后停止。故意 `deferred` 的文件不算扫描不完整。当前不提供断点续扫，重试会重新读取。
 
 边界与预算：
 

@@ -3,8 +3,9 @@ package main
 const searchHelpNotes = `
 补充：
   --path 可以是 root 内相对目录或单个文件，可重复。! 前缀排除该路径。
-  xlsx 模式下可点名或排除单个 .xlsx，避免 7–9MB 大表吃满整次 timeout。
-  --timeout 上限仍是 10s；20s 会 invalid_request。大表先过滤，不要先加超时。
+  xlsx 目录冷启动：先按文件名/表名/共享字符串字面量排序，只内容扫描第一簿。
+  其余为 pending/deferred，用 --path 点名下一簿。不要先排除大表再扫剩余目录。
+  --timeout 上限仍是 10s；20s 会 invalid_request。不要加超时，也不要近义匹配。
   零字面命中是 unknown，不能写成「表里没有」或「功能不存在」。
   read 的 --field 与 --range 见 --help-xlsx 或 codefind read --help。
 `
@@ -12,11 +13,12 @@ const searchHelpNotes = `
 const xlsxHelpText = `codefind XLSX 搜索与 read
 
 搜索（--format xlsx）：
-  --path 可以是目录，也可以点名单个 .xlsx。
-  --path '!合十_关卡数值.xlsx' 从目录枚举里排除该簿（可重复）。
-  只有排除项时，默认仍扫授权根下的 '.'。
-  7–9MB 工作簿会吃满单次 timeout。先点名目标簿或排除大簿。
-  --timeout 上限仍是 10s；不要把 20s 当成合法值。
+  不知道文件名时，直接对目录跑一次。工具先做廉价发现（文件名、大小、
+  表名、共享字符串字面量），再只内容扫描排名最高的一簿。
+  workbook_coverage 里 complete 的是本次证据；reason=deferred 的用
+  --path 点名再搜。不要先 !排除 7–9MB 再扫剩下的 2–3MB 目录。
+  --path 仍可点名单个 .xlsx，或 !排除路径。点名多簿会全部内容扫描。
+  --timeout 上限仍是 10s；不要把 20s 当成合法值。不做近义自动命中。
 
 read --range 与 --field：
   --range A44:L55

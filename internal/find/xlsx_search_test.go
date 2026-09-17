@@ -47,7 +47,7 @@ func TestXLSXFileTimeoutContinues(t *testing.T) {
 	if e := os.WriteFile(filepath.Join(root, "z.xlsx"), data, 0600); e != nil {
 		t.Fatal(e)
 	}
-	req, e := normalizeRequest(Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}, Timeout: time.Second})
+	req, e := normalizeRequest(Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}, Timeout: time.Second, Paths: []string{"design.xlsx", "z.xlsx"}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -77,7 +77,7 @@ func TestXLSXPendingAfterMatchLimit(t *testing.T) {
 	if e := os.WriteFile(filepath.Join(root, "z.xlsx"), data, 0600); e != nil {
 		t.Fatal(e)
 	}
-	r, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}, MaxAnchors: 1, MaxMatches: 1})
+	r, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}, MaxAnchors: 1, MaxMatches: 1, Paths: []string{"design.xlsx", "z.xlsx"}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -165,6 +165,128 @@ func TestXLSXZeroHitIsUnknownNotAbsence(t *testing.T) {
 	}
 	if strings.Contains(joined, "表里没有") && !strings.Contains(joined, "不能写成表里没有") {
 		t.Fatalf("zero hit claimed the field is missing: %q", joined)
+	}
+}
+
+func TestXLSXDirectoryScansOneWorkbook(t *testing.T) {
+	root := workbookFixture(t, nil)
+	data, e := os.ReadFile(filepath.Join(root, "design.xlsx"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "z.xlsx"), data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	calls := 0
+	req, e := normalizeRequest(Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	r, e := findWorkbooksWithScanner(context.Background(), req, Result{}, time.Now(), func(ctx context.Context, p string, patterns []string, emit func(string, string, string, string) error) error {
+		calls++
+		return emit("common", "B2", "cell", "Pvp")
+	})
+	if e != nil || calls != 1 || r.Status != StatusCandidatesFound || r.Metrics.XLSXFilesScanned != 1 {
+		t.Fatalf("calls=%d r=%+v e=%v", calls, r, e)
+	}
+	if len(r.WorkbookCoverage.Files) != 2 || r.WorkbookCoverage.Files[1].Reason != reasonDeferred || r.WorkbookCoverage.Files[1].Status != "pending" {
+		t.Fatalf("coverage=%+v", r.WorkbookCoverage)
+	}
+	if !r.WorkbookCoverage.DiscoveryComplete {
+		t.Fatal("discovery should list every file")
+	}
+}
+
+func TestXLSXSharedStringHintBeatsSmallerFile(t *testing.T) {
+	root := workbookFixture(t, nil)
+	decoy, e := os.ReadFile(filepath.Join(root, "design.xlsx"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "aaa.xlsx"), decoy, 0600); e != nil {
+		t.Fatal(e)
+	}
+	target := workbookFixture(t, map[string]string{
+		"xl/sharedStrings.xml":     `<sst><si><t>木鱼每日获得功德上限</t></si></sst>`,
+		"xl/worksheets/sheet1.xml": `<worksheet><sheetData><row r="2"><c r="B2" t="s"><v>0</v></c></row></sheetData></worksheet>`,
+	})
+	targetBytes, e := os.ReadFile(filepath.Join(target, "design.xlsx"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "zzz.xlsx"), targetBytes, 0600); e != nil {
+		t.Fatal(e)
+	}
+	r, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"木鱼"}})
+	if e != nil || r.Status != StatusCandidatesFound || r.Metrics.XLSXFilesScanned != 1 {
+		t.Fatalf("r=%+v e=%v", r, e)
+	}
+	if r.WorkbookCoverage.Files[0].Path != "zzz.xlsx" || r.WorkbookCoverage.Files[0].Status != "complete" {
+		t.Fatalf("selected=%+v", r.WorkbookCoverage)
+	}
+	for _, f := range r.WorkbookCoverage.Files[1:] {
+		if f.Reason != reasonDeferred {
+			t.Fatalf("expected deferred, got %+v", f)
+		}
+	}
+	if !hasPath(r.Anchors, "zzz.xlsx") || hasPath(r.Anchors, "aaa.xlsx") || hasPath(r.Anchors, "design.xlsx") {
+		t.Fatalf("anchors=%+v", r.Anchors)
+	}
+}
+
+func TestXLSXNamedFilesStillScanAll(t *testing.T) {
+	root := workbookFixture(t, nil)
+	data, e := os.ReadFile(filepath.Join(root, "design.xlsx"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "z.xlsx"), data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	calls := 0
+	req, e := normalizeRequest(Request{Root: root, Format: "xlsx", Terms: []string{"Pvp"}, Paths: []string{"design.xlsx", "z.xlsx"}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if req.dirScope {
+		t.Fatal("named files must not be directory scope")
+	}
+	r, e := findWorkbooksWithScanner(context.Background(), req, Result{}, time.Now(), func(ctx context.Context, p string, patterns []string, emit func(string, string, string, string) error) error {
+		calls++
+		return emit("common", "B2", "cell", "Pvp")
+	})
+	if e != nil || calls != 2 || r.Status != StatusCandidatesFound {
+		t.Fatalf("calls=%d r=%+v e=%v", calls, r, e)
+	}
+	for _, f := range r.WorkbookCoverage.Files {
+		if f.Reason == reasonDeferred {
+			t.Fatalf("named files should not defer: %+v", r.WorkbookCoverage)
+		}
+	}
+}
+
+func TestXLSXDeferredZeroHitIsUnknown(t *testing.T) {
+	root := workbookFixture(t, nil)
+	data, e := os.ReadFile(filepath.Join(root, "design.xlsx"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "z.xlsx"), data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	r, e := Find(context.Background(), Request{Root: root, Format: "xlsx", Terms: []string{"木鱼上限"}})
+	if e != nil || r.Status != StatusNoCandidates || len(r.Anchors) != 0 {
+		t.Fatalf("r=%+v e=%v", r, e)
+	}
+	if r.Metrics.XLSXFilesScanned != 1 {
+		t.Fatalf("scanned=%d", r.Metrics.XLSXFilesScanned)
+	}
+	joined := strings.Join(r.Unknowns, "\n")
+	if !strings.Contains(joined, "unknown") || !strings.Contains(joined, "deferred") {
+		t.Fatalf("unknowns=%q", joined)
+	}
+	if strings.Contains(joined, "不在工作簿") || strings.Contains(joined, "内容不存在") {
+		t.Fatalf("claimed absence: %q", joined)
 	}
 }
 
