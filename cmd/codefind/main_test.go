@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/Q-xuan/codefind/internal/find"
@@ -45,8 +46,45 @@ func TestErrorsAreJSON(t *testing.T) {
 	}
 }
 
+func TestHelpExplainsPathRangeAndUnknown(t *testing.T) {
+	var out bytes.Buffer
+	code := run([]string{"--help"}, &out, io.Discard, func(context.Context, find.Request) (find.Result, error) {
+		t.Fatal("search should not run for --help")
+		return find.Result{}, nil
+	})
+	text := out.String()
+	if code != 0 {
+		t.Fatal(code)
+	}
+	for _, want := range []string{"单个文件", "!前缀", "--range", "unknown", "10s", "next_path"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("help missing %q in %s", want, text)
+		}
+	}
+}
+
+func TestHelpXLSXExplainsFieldVsRange(t *testing.T) {
+	var out bytes.Buffer
+	code := run([]string{"--help-xlsx"}, &out, io.Discard, func(context.Context, find.Request) (find.Result, error) {
+		t.Fatal("search should not run for --help-xlsx")
+		return find.Result{}, nil
+	})
+	text := out.String()
+	if code != 0 {
+		t.Fatal(code)
+	}
+	for _, want := range []string{"--range", "--field", "更稳", "unknown", "表里没有", "10s", "deferred"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("help-xlsx missing %q in %s", want, text)
+		}
+	}
+	if strings.Contains(text, "不在工作簿") {
+		t.Fatalf("help-xlsx implied absence: %s", text)
+	}
+}
+
 func TestHelpVersionAndSuccess(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"--version"}, {"--root", ".", "--symbol", "Find"}} {
+	for _, args := range [][]string{{"--help"}, {"--help-xlsx"}, {"--version"}, {"--root", ".", "--symbol", "Find"}} {
 		var out bytes.Buffer
 		code := run(args, &out, io.Discard, func(_ context.Context, req find.Request) (find.Result, error) {
 			if req.Root != "." || len(req.Symbols) != 1 {
@@ -103,7 +141,7 @@ func TestXLSXFlag(t *testing.T) {
 func (brokenWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestOutputFailures(t *testing.T) {
-	for _, args := range [][]string{{"--version"}, {"--help"}, {"--unknown"}, {}} {
+	for _, args := range [][]string{{"--version"}, {"--help"}, {"--help-xlsx"}, {"--unknown"}, {}} {
 		var diagnostics bytes.Buffer
 		if code := run(args, brokenWriter{}, &diagnostics, func(context.Context, find.Request) (find.Result, error) { return find.Result{}, nil }); code != 1 || diagnostics.Len() == 0 {
 			t.Fatalf("code=%d stderr=%s", code, diagnostics.String())

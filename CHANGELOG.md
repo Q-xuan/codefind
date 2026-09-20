@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `--path` may name a single file or exclude one with a `!` prefix. Directory xlsx cold start ranks by filename, sheet names and shared-string occurrence counts (not smaller-file ties), then content-scans one workbook. Coverage includes `score`, `size` and `next_path`; a named single file keeps sibling `deferred` entries for hopping. Timeout ceiling stays 10s; no synonym matching.
+- `--help`, `--help-xlsx`, and `read --help` explain `read --range` vs `--field` (use `--range` when the rectangle is known) and that a zero lexical hit is unknown, not “not in the workbook.”
+- `read` skips cells outside the selected range or anchor boxes so a small `--range` no longer hits the 100000-cell cap on a large sheet. Field-column disambiguation for duplicate headers such as 「类型」 is unchanged.
 - Add opt-in Lua, C#, C/C++, JavaScript and TypeScript lexical search through repeatable --lang; --lang all selects every supported language. Default Go scope and domain evidence remain unchanged; only Go receives AST enrichment.
 
 ## [0.2.0-rc.1] - 2026-09-07

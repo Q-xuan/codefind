@@ -44,24 +44,25 @@ func run(args []string, stdout, stderr io.Writer, search func(context.Context, f
 	encoding := flag.String("encoding", "auto", "文件编码：auto、utf-8、gbk、gb18030；auto 不猜测 GBK")
 	maxAnchors := flag.Int("max-anchors", 12, "最多输出多少个候选锚点")
 	maxMatches := flag.Int("max-matches", 2000, "最多扫描多少条原始匹配")
-	timeout := flag.Duration("timeout", 2*time.Second, "本次搜索总超时")
+	timeout := flag.Duration("timeout", 2*time.Second, "本次搜索总超时，上限 10s；大 xlsx 请先 --path 过滤")
 	showVersion := flag.Bool("version", false, "输出版本")
+	helpXLSX := flag.Bool("help-xlsx", false, "说明 xlsx 搜索、read 的 field/range，以及零命中语义")
 	flag.Var(&terms, "term", "领域词、动作词或历史别名，可重复")
 	flag.Var(&symbols, "symbol", "候选 symbol 或 test 词，可重复")
-	flag.Var(&paths, "path", "root 内的搜索目录，可重复；默认 .")
+	flag.Var(&paths, "path", "root 内相对目录或单个文件，可重复；!前缀排除；默认 .")
 	flag.Var(&languages, "lang", "源码语言，可重复：go（默认）、lua、csharp、c、cpp、js、ts、all；保留协议/配置/文档")
 	if err := flag.Parse(args); err != nil {
 		if errors.Is(err, flagpkg.ErrHelp) {
-			var help bytes.Buffer
-			flag.SetOutput(&help)
-			flag.PrintDefaults()
-			if _, err := io.Copy(stdout, &help); err != nil {
-				fmt.Fprintln(stderr, err)
-				return 1
-			}
-			return 0
+			return writeHelp(stdout, stderr, flag, searchHelpNotes)
 		}
 		return writeError(stdout, stderr, "invalid_request", err, 2)
+	}
+	if *helpXLSX {
+		if _, err := io.WriteString(stdout, xlsxHelpText); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	}
 	if flag.NArg() != 0 {
 		return writeError(stdout, stderr, "invalid_request", fmt.Errorf("unexpected positional arguments: %v", flag.Args()), 2)
@@ -93,6 +94,18 @@ func run(args []string, stdout, stderr io.Writer, search func(context.Context, f
 		return writeError(stdout, stderr, "execution_error", err, 1)
 	}
 	if err := json.NewEncoder(stdout).Encode(result); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func writeHelp(stdout, stderr io.Writer, flag *flagpkg.FlagSet, notes string) int {
+	var help bytes.Buffer
+	flag.SetOutput(&help)
+	flag.PrintDefaults()
+	help.WriteString(notes)
+	if _, err := io.Copy(stdout, &help); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
