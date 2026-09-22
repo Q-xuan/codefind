@@ -2,10 +2,22 @@
 
 ## Unreleased
 
+Local candidate after 0.2.0-rc.1; no remote tag or public release is implied. Binary `Version` is `0.2.0-rc.2`.
+
+### Added
+
 - `--path` may name a single file or exclude one with a `!` prefix. Directory xlsx cold start ranks by filename, sheet names and shared-string occurrence counts (not smaller-file ties), then content-scans one workbook. Coverage includes `score`, `size` and `next_path`; a named single file keeps sibling `deferred` entries for hopping. Timeout ceiling stays 10s; no synonym matching.
-- `--help`, `--help-xlsx`, and `read --help` explain `read --range` vs `--field` (use `--range` when the rectangle is known) and that a zero lexical hit is unknown, not “not in the workbook.”
+- `--help`, `--help-xlsx`, and `read --help` explain which format to call, `read --range` vs `--field` (use `--range` when the rectangle is known), and that a zero lexical hit is unknown, not “not in the workbook.”
 - `read` skips cells outside the selected range or anchor boxes so a small `--range` no longer hits the 100000-cell cap on a large sheet. Field-column disambiguation for duplicate headers such as 「类型」 is unchanged.
-- Add opt-in Lua, C#, C/C++, JavaScript and TypeScript lexical search through repeatable --lang; --lang all selects every supported language. Default Go scope and domain evidence remain unchanged; only Go receives AST enrichment.
+- Opt-in Lua, C#, C/C++, JavaScript and TypeScript lexical search through repeatable `--lang`; `--lang all` selects every supported language. Default Go scope and domain evidence remain unchanged; only Go receives AST enrichment.
+- `auto` encoding: if an authorized `*.csv` / `*.tsv` is not valid UTF-8, run one additional `rg --encoding gb18030` limited to those globs. No whole-tree retry. Explicit `utf-8` / `gbk` / `gb18030` do not fall back. Main-search `budget_exceeded` skips the retry. `!` excludes are honored by both the probe and the retry.
+- Additive contract fields: `query.encoding_applied` and `metrics.encoding_retries` (`0` or `1`). `query.encoding` stays the request option.
+- Treat `*.tsv` as domain evidence and `kind: config`, matching CSV.
+
+### Changed
+
+- README / json-contract / CLI `--encoding` help now describe the csv/tsv fallback instead of “auto never guesses”.
+- Non-goals heading refers to the current version, not v0.1.x.
 
 ## [0.2.0-rc.1] - 2026-09-07
 

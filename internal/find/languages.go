@@ -77,7 +77,15 @@ func searchGlobs(languages []string) []string {
 		}
 	}
 	// Domain evidence stays available even when source language is narrowed.
-	return append(globs, "*.proto", "*.md", "*.csv", "*.yaml", "*.yml", "!**/.git/**", "!**/vendor/**", "!**/node_modules/**", "!**/*.min.js", "!**/*.min.mjs", "!**/*.min.cjs")
+	return append(append(globs, domainEvidenceGlobs()...), searchExcludeGlobs()...)
+}
+
+func domainEvidenceGlobs() []string {
+	return []string{"*.proto", "*.md", "*.csv", "*.tsv", "*.yaml", "*.yml"}
+}
+
+func searchExcludeGlobs() []string {
+	return []string{"!**/.git/**", "!**/vendor/**", "!**/node_modules/**", "!**/*.min.js", "!**/*.min.mjs", "!**/*.min.cjs"}
 }
 
 func isLexicalSource(filename string) bool {
