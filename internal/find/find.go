@@ -19,7 +19,7 @@ import (
 
 const (
 	SchemaVersion = "codefind-result-v1"
-	Version       = "0.2.0-rc.1"
+	Version       = "0.2.0-rc.2"
 )
 
 const (
@@ -57,12 +57,13 @@ type Request struct {
 }
 
 type Query struct {
-	Languages []string `json:"languages"`
-	Format    string   `json:"format"`
-	Encoding  string   `json:"encoding"`
-	Terms     []string `json:"terms"`
-	Symbols   []string `json:"symbols"`
-	Paths     []string `json:"paths"`
+	Languages       []string `json:"languages"`
+	Format          string   `json:"format"`
+	Encoding        string   `json:"encoding"`
+	EncodingApplied []string `json:"encoding_applied"`
+	Terms           []string `json:"terms"`
+	Symbols         []string `json:"symbols"`
+	Paths           []string `json:"paths"`
 }
 
 type Anchor struct {
@@ -91,6 +92,7 @@ type Metrics struct {
 	SyntaxAnchors      int    `json:"syntax_anchors"`
 	SyntaxParseErrors  int    `json:"syntax_parse_errors"`
 	SyntaxFilesSkipped int    `json:"syntax_files_skipped"`
+	EncodingRetries    int    `json:"encoding_retries"`
 }
 
 type Limits struct {
@@ -142,12 +144,13 @@ func Find(ctx context.Context, request Request) (Result, error) {
 		Engine:        "codefind",
 		Version:       Version,
 		Query: Query{
-			Languages: normalized.Languages,
-			Format:    normalized.Format,
-			Encoding:  normalized.Encoding,
-			Terms:     normalized.Terms,
-			Symbols:   normalized.Symbols,
-			Paths:     normalized.Paths,
+			Languages:       normalized.Languages,
+			Format:          normalized.Format,
+			Encoding:        normalized.Encoding,
+			EncodingApplied: []string{normalized.Encoding},
+			Terms:           normalized.Terms,
+			Symbols:         normalized.Symbols,
+			Paths:           normalized.Paths,
 		},
 		Anchors:  []Anchor{},
 		Unknowns: []string{},
@@ -194,7 +197,7 @@ func Find(ctx context.Context, request Request) (Result, error) {
 			budgetExceeded = true
 			break
 		}
-		rows, truncated, first, err := runRG(searchCtx, normalized.root, normalized.includes, normalized.excludes, group.name, group.items, normalized.Encoding, normalized.Languages, remaining, started)
+		rows, truncated, first, err := runRG(searchCtx, normalized.root, normalized.includes, normalized.excludes, group.name, group.items, normalized.Encoding, searchGlobs(normalized.Languages), remaining, started)
 		result.Metrics.RGCalls++
 		if result.Metrics.FirstAnchorMS == nil && first != nil {
 			result.Metrics.FirstAnchorMS = first
@@ -210,6 +213,43 @@ func Find(ctx context.Context, request Request) (Result, error) {
 		if truncated {
 			budgetExceeded = true
 			break
+		}
+	}
+
+	if !budgetExceeded && searchCtx.Err() == nil && normalized.Encoding == "auto" {
+		foundInvalid, probeIncomplete := hasInvalidUTF8ConfigTables(searchCtx, normalized.root, normalized.includes, normalized.excludes)
+		if probeIncomplete {
+			result.Unknowns = append(result.Unknowns, "配置表编码探测未完成。")
+		} else if foundInvalid {
+			result.Metrics.EncodingRetries = 1
+			result.Query.EncodingApplied = []string{"auto", "gb18030"}
+			for _, group := range groups {
+				if len(group.items) == 0 {
+					continue
+				}
+				remaining := normalized.MaxMatches - len(all)
+				if remaining <= 0 {
+					budgetExceeded = true
+					break
+				}
+				rows, truncated, first, err := runRG(searchCtx, normalized.root, normalized.includes, normalized.excludes, group.name, group.items, "gb18030", configTableRetryGlobs(), remaining, started)
+				result.Metrics.RGCalls++
+				if result.Metrics.FirstAnchorMS == nil && first != nil {
+					result.Metrics.FirstAnchorMS = first
+				}
+				all = append(all, rows...)
+				if err != nil {
+					if errors.Is(err, context.DeadlineExceeded) || errors.Is(searchCtx.Err(), context.DeadlineExceeded) {
+						budgetExceeded = true
+						break
+					}
+					return Result{}, err
+				}
+				if truncated {
+					budgetExceeded = true
+					break
+				}
+			}
 		}
 	}
 
@@ -237,6 +277,13 @@ func Find(ctx context.Context, request Request) (Result, error) {
 	case len(result.Anchors) == 0:
 		result.Status = StatusNoCandidates
 		result.Unknowns = append(result.Unknowns, "0 命中只表示 unknown；请更换稳定 symbol 或扩大已授权范围后回读源码。")
+		if normalized.Encoding == "auto" {
+			if result.Metrics.EncodingRetries == 1 {
+				result.Unknowns = append(result.Unknowns, "已按 auto 搜索，并对无法按 UTF-8 解释的 csv/tsv 试过 gb18030。仍为 unknown。")
+			} else {
+				result.Unknowns = append(result.Unknowns, "已按 auto 搜索。仍为 unknown。")
+			}
+		}
 	default:
 		result.Status = StatusCandidatesFound
 	}
@@ -403,7 +450,7 @@ func pathExcluded(rel string, excludes []string) bool {
 	return false
 }
 
-func runRG(ctx context.Context, root string, paths []string, excludes []string, group string, patterns []string, encoding string, languages []string, maxMatches int, started time.Time) ([]rawMatch, bool, *int64, error) {
+func runRG(ctx context.Context, root string, paths []string, excludes []string, group string, patterns []string, encoding string, globs []string, maxMatches int, started time.Time) ([]rawMatch, bool, *int64, error) {
 	groupCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -418,7 +465,7 @@ func runRG(ctx context.Context, root string, paths []string, excludes []string, 
 		"--max-columns", "300",
 		"--max-columns-preview",
 	}
-	for _, glob := range searchGlobs(languages) {
+	for _, glob := range globs {
 		args = append(args, "--glob", glob)
 	}
 	for _, ex := range excludes {
@@ -644,7 +691,7 @@ func classify(path string, text string) string {
 	switch {
 	case strings.HasSuffix(lowerPath, ".proto"):
 		return "protocol"
-	case strings.HasSuffix(lowerPath, ".csv") || strings.HasSuffix(lowerPath, ".yaml") || strings.HasSuffix(lowerPath, ".yml"):
+	case strings.HasSuffix(lowerPath, ".csv") || strings.HasSuffix(lowerPath, ".tsv") || strings.HasSuffix(lowerPath, ".yaml") || strings.HasSuffix(lowerPath, ".yml"):
 		return "config"
 	case strings.HasSuffix(lowerPath, ".md"):
 		return "docs"

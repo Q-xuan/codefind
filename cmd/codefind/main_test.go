@@ -56,7 +56,7 @@ func TestHelpExplainsPathRangeAndUnknown(t *testing.T) {
 	if code != 0 {
 		t.Fatal(code)
 	}
-	for _, want := range []string{"单个文件", "!前缀", "--range", "unknown", "10s", "next_path"} {
+	for _, want := range []string{"--format xlsx", "gb18030", "单个文件", "!前缀", "--range", "unknown", "10s", "next_path"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q in %s", want, text)
 		}
@@ -109,6 +109,13 @@ func TestLanguageFlags(t *testing.T) {
 	})
 	if code != 0 {
 		t.Fatal(code)
+	}
+}
+
+func TestEncodingHelpMentionsCSVFallback(t *testing.T) {
+	var out bytes.Buffer
+	if code := run([]string{"--help"}, &out, io.Discard, nil); code != 0 || !bytes.Contains(out.Bytes(), []byte("csv/tsv")) || !bytes.Contains(out.Bytes(), []byte("gb18030")) {
+		t.Fatalf("code=%d help=%s", code, out.String())
 	}
 }
 

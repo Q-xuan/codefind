@@ -2,12 +2,14 @@ package main
 
 const searchHelpNotes = `
 补充：
+  一次调用只选一种格式。策划 xlsx 用 --format xlsx；源码、协议、csv/tsv、文档用默认 text。
+  text：auto 只对非法 UTF-8 的 csv/tsv 再试一次 gb18030，不会整树换编码。看 encoding_applied。
   --path 可以是 root 内相对目录或单个文件，可重复。! 前缀排除该路径。
   xlsx 目录冷启动：按文件名/表名/共享字符串出现次数排序，并列不取最小文件。
   只扫一簿。看 score/size 与 next_path；--path 点名后仍保留 deferred 队列。
   --timeout 上限仍是 10s；20s 会 invalid_request。不要加超时，也不要近义匹配。
   零字面命中是 unknown，不能写成「表里没有」或「功能不存在」。
-  read 的 --field 与 --range 见 --help-xlsx 或 codefind read --help。
+  已知格子用 read --range。--field 与 --range 见 --help-xlsx 或 codefind read --help。
 `
 
 const xlsxHelpText = `codefind XLSX 搜索与 read
