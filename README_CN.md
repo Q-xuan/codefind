@@ -5,7 +5,7 @@
 
 [English](README.md) | 简体中文
 
-本地候选版本：**0.2.0-rc.2**（0.2.0-rc.1 之后的工作树）。兼容性见 [JSON 契约](docs/json-contract.md)，发布状态见 [检查清单](RELEASE_CHECKLIST.md)。下方公开安装命令使用已发布 revision，不保证已经包含本地候选版本。
+预发布：**v0.2.0-rc.2**（二进制版本 `0.2.0-rc.2`）。兼容性见 [JSON 契约](docs/json-contract.md)，发布状态见 [检查清单](RELEASE_CHECKLIST.md)。稳定版 0.2.0 未发布。`go install ...@latest` 不会选中这个预发布 tag，干净环境安装验证仍是未完成的检查项。
 
 `codefind` 是一个面向游戏项目、供 AI Coding Agent 使用的有预算业务线索发现 CLI。它跨 Go 源码、Proto 协议、CSV / TSV / YAML 配置和 Markdown 文档搜索玩法名称、配置 ID、历史别名及候选符号，不依赖代码建图。
 

@@ -5,7 +5,7 @@
 
 English | [简体中文](README_CN.md)
 
-Local candidate: **0.2.0-rc.2** (tree after 0.2.0-rc.1). See [JSON compatibility](docs/json-contract.md) and [release checks](RELEASE_CHECKLIST.md). Public installation commands below use published revisions and may not include this local candidate yet.
+Prerelease: **v0.2.0-rc.2** (binary `0.2.0-rc.2`). See [JSON compatibility](docs/json-contract.md) and [release checks](RELEASE_CHECKLIST.md). Stable 0.2.0 is not published. `go install ...@latest` does not select this prerelease tag, and a clean-environment install check is still an open gate.
 
 `codefind` is a budget-aware discovery CLI for AI coding agents working on game projects. It searches gameplay names, configuration IDs, historical aliases, and candidate symbols across Go source, Proto definitions, CSV / TSV / YAML configuration, and Markdown documentation—without building a code graph.
 

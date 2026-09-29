@@ -1,6 +1,8 @@
 # v0.2.0-rc.1 Local Release Checklist
 
-This is a local prerelease closeout, not authorization to publish a Git tag or remote release.
+The checked items below closed the local 0.2.0-rc.1 candidate only. They do not authorize stable 0.2.0.
+
+Public prerelease tag: `v0.2.0-rc.2` (binary `Version` `0.2.0-rc.2`). The public-release gates at the bottom are still open.
 
 ## Local gates
 

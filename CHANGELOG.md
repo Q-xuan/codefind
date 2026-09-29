@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## [0.2.0-rc.2] - 2026-09-29
 
-Local candidate after 0.2.0-rc.1; no remote tag or public release is implied. Binary `Version` is `0.2.0-rc.2`.
+Public prerelease. Binary `Version` is `0.2.0-rc.2`; the tag is `v0.2.0-rc.2`. This is not stable 0.2.0.
+
+Stable 0.2.0 stays blocked by the open public gates in `RELEASE_CHECKLIST.md`: native Windows/Linux/macOS CI on this tagged revision, and `go install` of the published version in a clean environment. `go install ...@latest` does not select a prerelease tag. This release does not replace ripgrep, a code graph, or vector search.
 
 ### Added
 
