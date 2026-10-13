@@ -42,15 +42,20 @@ func run(args []string, stdout, stderr io.Writer, search func(context.Context, f
 	root := flag.String("root", "", "要搜索的仓库根目录")
 	format := flag.String("format", "text", "搜索格式：text 或 xlsx")
 	encoding := flag.String("encoding", "auto", "文件编码：auto、utf-8、gbk、gb18030；auto 仅对非法 UTF-8 的 csv/tsv 追加一次 gb18030")
-	maxAnchors := flag.Int("max-anchors", 12, "最多输出多少个候选锚点")
+	maxAnchors := flag.Int("max-anchors", 12, "最多输出多少个候选锚点，允许 1..50")
 	maxMatches := flag.Int("max-matches", 2000, "最多扫描多少条原始匹配")
+	maxFiles := flag.Int("max-files", 0, "xlsx 显式批量内容扫描的工作簿数，允许 1..32；默认目录仍只扫 1 簿")
+	cursor := flag.String("cursor", "", "xlsx 续扫游标，跳过已完成文件")
+	matchMode := flag.String("match", "", "xlsx 匹配：substring（默认，可省略）或 exact（整格相等）")
 	timeout := flag.Duration("timeout", 2*time.Second, "本次搜索总超时，上限 10s；大 xlsx 请先 --path 过滤")
 	showVersion := flag.Bool("version", false, "输出版本")
 	helpXLSX := flag.Bool("help-xlsx", false, "说明 xlsx 搜索、read 的 field/range，以及零命中语义")
+	var sheets listFlag
 	flag.Var(&terms, "term", "领域词、动作词或历史别名，可重复")
 	flag.Var(&symbols, "symbol", "候选 symbol 或 test 词，可重复")
 	flag.Var(&paths, "path", "root 内相对目录或单个文件，可重复；!前缀排除；默认 .")
 	flag.Var(&languages, "lang", "源码语言，可重复：go（默认）、lua、csharp、c、cpp、js、ts、all；保留协议/配置/文档")
+	flag.Var(&sheets, "sheet", "xlsx 只内容扫描这些工作表，可重复；其它表记为 not_requested")
 	if err := flag.Parse(args); err != nil {
 		if errors.Is(err, flagpkg.ErrHelp) {
 			return writeHelp(stdout, stderr, flag, searchHelpNotes)
@@ -86,6 +91,10 @@ func run(args []string, stdout, stderr io.Writer, search func(context.Context, f
 		MaxAnchors: *maxAnchors,
 		MaxMatches: *maxMatches,
 		Timeout:    *timeout,
+		MaxFiles:   *maxFiles,
+		Cursor:     *cursor,
+		Match:      *matchMode,
+		Sheets:     sheets,
 	})
 	if err != nil {
 		if errors.Is(err, find.ErrInvalidRequest) {

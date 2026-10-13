@@ -42,20 +42,20 @@ codefind --root ./design/math --format xlsx --term Pvp --term "挑战券" --time
 
 此模式不调用 rg，不要求安装 Excel，不建立索引。命中返回 `kind: config`、工作簿相对 `path`、`text`、`groups` 和 `workbook: {sheet, cell, source}`；`source` 为 `cell` 或 `comment`，不提供源码 `line`。同一位置的单元格和批注可分别命中；没有批注命中不表示没有批注。`query.format` 区分 `text` / `xlsx`。
 
-不知道文件名时，对目录跑一次即可。廉价发现按文件名、表名、共享字符串**出现次数**排序；并列时中等大小（约 0.5–6MiB）优先，**不取最小文件**。然后**只内容扫描一簿**。`files[].score` / `size` 是排名依据，`next_path` 是下一跳。其余 `pending` + `reason=deferred`。`--path` 点名单簿仍会带上同目录 deferred，可按 `next_path` 连跳。点名多簿会全部内容扫描。timeout **上限仍是 10s**，`20s` 仍是 `invalid_request`。不做近义自动命中。名称/表名匹配忽略大小写且只影响排序；共享字符串提示和正文仍是大小写敏感字面量。提示未命中不会排除文件。选中的工作簿内部仍优先扫名称匹配的表。`codefind --help-xlsx` 说明目录冷启动、`read` 的 field/range，以及零命中措辞。
+不知道文件名时，对目录跑一次即可。廉价发现按文件名、表名、共享字符串**出现次数**排序；并列时中等大小（约 0.5–6MiB）优先，**不取最小文件**。然后**只内容扫描一簿**。`files[].score` / `size` 是排名依据，`next_path` 是下一跳。其余 `pending` + `reason=deferred`。`--path` 点名单簿仍会带上同目录 deferred，可按 `next_path` 连跳，也可以直接执行返回的 `next_command`。`--max-files` 是显式批量（1..32），`--cursor` 续扫且不重复已完成文件；停在预算上时 `content_complete` 为 false，不能当成全目录已扫描。点名多簿会全部内容扫描。同批里有一个文件读失败不会挡住其它文件。timeout **上限仍是 10s**，`20s` 仍是 `invalid_request`。不做近义自动命中。默认仍是子串；`--match exact` 才是整格相等，anchor 带 `matched_terms`。名称/表名匹配忽略大小写且只影响排序；共享字符串提示和正文仍是大小写敏感字面量。提示未命中不会排除文件。选中的工作簿内部仍优先扫名称匹配的表。`--sheet` 可以只扫指定表。`codefind --help-xlsx` 说明目录冷启动、`read` 的 field/range，以及零命中措辞。
 
 输出候选采用两层轮询：在已命中的工作簿之间分配名额，每个工作簿内部再轮询已命中的工作表；同表内部保留原有相关性顺序。这样可减少单表重复命中挤占结果，但不保证所有表都能进入很小的输出预算。此策略只筛选已扫描到的候选，不增加扫描范围或预算；为保持来源多样性，跨表结果不保证严格按符号优先级排列。
 
-`workbook_coverage.files` 按排名顺序列出已发现文件：`complete` 表示支持的内容已扫描完成，`partial` 表示未完成，`pending` 表示尚未开始。每项带 `score` 和 `size`。`next_path` 是刚扫描那一簿的下一排名。`reason` 区分 `file_timeout`、`total_timeout`、`match_limit`、`file_size_or_xml_limit` 和 `deferred`。`deferred` 不是超时，单独不会变成 `budget_exceeded`。`metadata_status` 单独报告名称元数据是否读取成功。`discovery_complete: false` 表示文件枚举本身受限，列表不是全部文件。这里的 complete 不代表 OCR、公式或业务理解已完成。
+`workbook_coverage.files` 按排名顺序列出已发现文件：`complete` 表示支持的内容已扫描完成，`partial` 表示未完成，`pending` 表示尚未开始。每项带 `score` 和 `size`。`next_path` 是刚扫描那一簿的下一排名。`reason` 区分 `file_timeout`、`total_timeout`、`match_limit`、`file_size`、`xml_part`、`xml_total`、`sheet_limit`、`read_error`、`cursor_skipped` 和 `deferred`。超限还会带 `limit_kind`、`limit_bytes`、`actual_bytes`、`budget_bytes`，以及能定位时的 `entry` / `sheet`。一张表超限不会丢掉已经读到的其它表。`deferred` 不是超时，单独不会变成 `budget_exceeded`。`metadata_status` 单独报告名称元数据是否读取成功。`discovery_complete: false` 表示文件枚举本身受限，列表不是全部文件。`content_complete: false` 表示目录内容还没扫完。这里的 complete 不代表 OCR、公式或业务理解已完成。
 
-元数据阶段最多使用总超时的 20%，每个工作簿最多 200ms、XML 读取最多 1 MiB（表名 + 共享字符串字面量提示）。读取失败只回退到文件名/大小排序，不丢弃候选。目录冷启动把剩余时间整段给选中的那一簿；显式点名的多簿仍按 `min(点名数, 4)` 均分。点名多簿时，单文件时间或大小预算耗尽后继续下一簿；全局时间或匹配预算耗尽后停止。故意 `deferred` 的文件不算扫描不完整。当前不提供断点续扫，重试会重新读取。
+元数据阶段最多使用总超时的 20%，每个工作簿最多 200ms、XML 读取最多 1 MiB（表名 + 共享字符串字面量提示）。读取失败只回退到文件名/大小排序，不丢弃候选。目录冷启动把剩余时间整段给选中的那一簿；显式 `--max-files` 或点名多簿仍按 `min(本批文件数, 4)` 均分。多簿时，单文件时间、大小或读取失败后继续下一簿；全局时间或匹配预算耗尽后停止。故意 `deferred` 的文件不算扫描不完整。`--cursor` 会跳过已完成文件，不会把那些文件重读一遍。
 
 边界与预算：
 
 - 默认仍为 `--format text`；两种模式分次查询，XLSX 不接受非 auto 的 `--encoding`。
 - XLSX 使用大小写敏感的字面量匹配；不搜索工作表名、图片、截图、线程评论或公式表达式，不重算公式，也不解释字段。缓存值可能过期，数字/日期格式不渲染，合并单元格只定位实际存储值的单元格。
 - 共享 `--timeout`、`--max-matches`、`--max-anchors`；原始匹配按单元格或批注计数，重复查询组不重复计数。最多扫描 32 个工作簿，单文件不超过 32 MiB，每个工作簿累计 XML 解压读取上限 64 MiB。超过任一预算返回 `budget_exceeded`，已找到的候选仍保留。
-- `metrics.xlsx_files_scanned` 记录尝试扫描的文件数；损坏或不可读工作簿返回 `execution_error`，不会伪装成零命中。
+- `metrics.xlsx_files_scanned` 记录尝试扫描的文件数。只有这一簿在扫、并且它损坏时，仍返回 `execution_error`，不会伪装成零命中。同批里还有其它文件时，失败记为 `reason=read_error`，其余文件继续。
 - 只遍历明确授权的 root/path；不跟随符号链接，跳过点号子目录、vendor、node_modules 和 `~$` 锁文件。此原生模式不读取 `.gitignore`，请使用 `--path` 限定（目录、点名文件或 `!` 排除）；不提取 ZIP 到磁盘、不访问工作簿外部链接、不修改原表。
 - 旧 `.xls`、加密工作簿和截图渲染不支持。零字面命中是 **unknown**，不能写成「表里没有该字段」。不会推断近义写法。
 
@@ -143,11 +143,11 @@ codefind read --root ./design/math --file common.xlsx --sheet common --anchor D2
 
 文件名、工作表和坐标均需替换为实际命中位置。`--range` 与 `--anchor` 二选一。矩形已知时 **优先 `--range`**：`--field 类型` 可能选中旁边同名列。`codefind --help-xlsx` 与 `codefind read --help` 写明这一点。
 
-- 显式 range 最多 4096 格；`--max-cells` 默认返回 96 格、上限 4096；`--max-chars` 默认 24000、上限 200000，限制返回的原始文本字符，不包含 JSON/坐标开销。空格子不逐一返回。
+- 显式 range 最多 4096 格；`--max-cells` 默认返回 96 格、上限 4096；`--max-chars` 默认 24000、上限 200000，限制返回的原始文本字符，不包含 JSON/坐标开销。搜索侧 `--max-anchors` 允许 1..50。空格子不逐一返回。`requested_cells` / `returned_cells` / `last_cell` 是这一页的格子数和最后坐标。`cell_truncated` 与 `char_truncated` 分开。`parse_complete` 不等于格子已经全部返回。`resume_cursor` 和 `next_ranges` 续读剩余格子，不重叠。
 - anchor 默认 `--strategy adaptive`，需要 `--field` 指定目标字段及可重复别名。结构策略在前 64 列寻找同行相同键，在键右侧向上最多 32 行匹配字段表头；未找到字段列时回退同行＋前 12 行表头。不是自动字段解释，多个字段候选全部保留。
 - 可显式使用 `structure`、`row_headers` 或 `window`；window 为命中格上下 2 行、左右 4 列。策略都不自动跨工作表或扩大授权范围。
 - adaptive 向上未找到字段时，先在命中格下方 8 行、前 64 列寻找字段表头；命中后回读该列自表头起的 9 行，并带上命中格所在列及右侧两列的同行标签。实际策略报告 below_headers，原因 no_field_columns_above；下方仍无字段才回退 row_headers。多列候选全部保留，此规则不证明标题与附近表格的业务关联。为此 adaptive 保留的候选范围最多延伸至命中格下方 16 行，仍受输出与总读取预算约束。
-- 结果结构为 `codefind-read-v1`，包含 cells、field_candidates、merged_ranges、实际 strategy、fallback_reason 和 coverage。单元格分别保留 value、formula、cached_value、comment；共享公式保留原始属性，不重建表达式，不渲染数字格式、不重算。
+- 结果结构为 `codefind-read-v1`，包含 cells、field_candidates、merged_ranges、实际 strategy、fallback_reason 和 coverage。单元格分别保留 value、formula、cached_value、comment。共享公式的后续格仍保留空的原始 expression，并给出 `shared_anchor` 与 `anchor_expression`。`resolved_expression` 只是相对引用的机械展开，不是重算；展不开时 `resolve_status=unknown`，不静默推算。不渲染数字格式。
 - `read_complete` 仅说明选定范围解析及输出未被预算截断，不表示问题已回答；`budget_exceeded` 表示读取或输出未完成。错误沿用 JSON invalid_request/退出码2、execution_error/退出码1，成功结果（含预算耗尽）退出码0。
 - 超时默认 2s、上限 10s；沿用工作簿 32 MiB、XML 64 MiB 限制，最多扫描 100000 个**范围内**单元格/批注事件和 4096 个合并区域。选定 range 或 anchor 框外的格子会跳过，不计入该上限。工作簿共享字符串仍会读取。coverage.ranges 是保留候选的坐标范围，不是磁盘读取范围。
 - 合并区域保留坐标；左上角在保留范围外时提示扩大范围，不擅自补读。文本裁剪用 text_truncated 标记；批注属于 cell，不与别处的备注文字混为一谈。

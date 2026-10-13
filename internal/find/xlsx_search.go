@@ -3,6 +3,7 @@ package find
 import (
 	"archive/zip"
 	"context"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -10,22 +11,44 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type WorkbookCoverage struct {
 	DiscoveryComplete bool           `json:"discovery_complete"`
+	ContentComplete   bool           `json:"content_complete"`
 	NextPath          string         `json:"next_path,omitempty"`
+	NextCommand       string         `json:"next_command,omitempty"`
+	ResumeCursor      string         `json:"resume_cursor,omitempty"`
 	Files             []WorkbookScan `json:"files"`
 }
 type WorkbookScan struct {
-	Path           string `json:"path"`
-	Status         string `json:"status"` // pending, complete, partial
-	Reason         string `json:"reason,omitempty"`
-	MetadataStatus string `json:"metadata_status"`
-	Score          int    `json:"score"`
-	Size           int64  `json:"size"`
+	Path           string      `json:"path"`
+	Status         string      `json:"status"` // pending, complete, partial
+	Reason         string      `json:"reason,omitempty"`
+	MetadataStatus string      `json:"metadata_status"`
+	Score          int         `json:"score"`
+	Size           int64       `json:"size"`
+	LimitKind      string      `json:"limit_kind,omitempty"`
+	LimitBytes     int64       `json:"limit_bytes,omitempty"`
+	ActualBytes    int64       `json:"actual_bytes,omitempty"`
+	BudgetBytes    int64       `json:"budget_bytes,omitempty"`
+	Entry          string      `json:"entry,omitempty"`
+	Sheet          string      `json:"sheet,omitempty"`
+	Detail         string      `json:"detail,omitempty"`
+	Sheets         []SheetScan `json:"sheets,omitempty"`
+}
+type SheetScan struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Reason      string `json:"reason,omitempty"`
+	LimitKind   string `json:"limit_kind,omitempty"`
+	LimitBytes  int64  `json:"limit_bytes,omitempty"`
+	ActualBytes int64  `json:"actual_bytes,omitempty"`
+	BudgetBytes int64  `json:"budget_bytes,omitempty"`
+	Entry       string `json:"entry,omitempty"`
 }
 type workbookCandidate struct {
 	physical, relative string
@@ -312,12 +335,64 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 	}
 	result.WorkbookCoverage = coverage
 	result.Unknowns = append(result.Unknowns, "XLSX 仅搜索单元格存储值和传统批注；不重算公式、不搜索图片或线程评论。")
-	anchors := []Anchor{}
-	matches := 0
-	budget := !complete
+	done := map[string]bool{}
+	if req.Cursor != "" {
+		paths, err := decodeResumeCursor(req.Cursor)
+		if err != nil {
+			return Result{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		}
+		for _, p := range paths {
+			done[p] = true
+		}
+	}
+	explicitBatch := req.MaxFiles > 0
 	namedSingle := !req.dirScope && len(req.includes) == 1
+	for i, c := range candidates {
+		if done[c.relative] {
+			coverage.Files[i].Status = "complete"
+			coverage.Files[i].Reason = "cursor_skipped"
+		}
+	}
 	scanIdx := []int{}
-	if (req.dirScope || namedSingle) && len(candidates) > 1 {
+	if explicitBatch || req.Cursor != "" {
+		limit := req.MaxFiles
+		if limit == 0 {
+			limit = 1
+		}
+		if namedSingle && !explicitBatch {
+			for i, c := range candidates {
+				if c.relative == req.includes[0] && !done[c.relative] {
+					scanIdx = append(scanIdx, i)
+				}
+			}
+		} else {
+			for i, c := range candidates {
+				if done[c.relative] {
+					continue
+				}
+				scanIdx = append(scanIdx, i)
+				if len(scanIdx) == limit {
+					break
+				}
+			}
+		}
+		for i := range coverage.Files {
+			if coverage.Files[i].Reason == "cursor_skipped" {
+				continue
+			}
+			selected := false
+			for _, j := range scanIdx {
+				if j == i {
+					selected = true
+					break
+				}
+			}
+			if !selected {
+				coverage.Files[i].Status = "pending"
+				coverage.Files[i].Reason = reasonDeferred
+			}
+		}
+	} else if (req.dirScope || namedSingle) && len(candidates) > 1 {
 		idx := 0
 		if namedSingle {
 			for i, c := range candidates {
@@ -334,16 +409,25 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 				coverage.Files[i].Reason = reasonDeferred
 			}
 		}
-		if idx+1 < len(candidates) {
-			coverage.NextPath = candidates[idx+1].relative
-		}
-		result.Unknowns = append(result.Unknowns, "本次只内容扫描一簿。workbook_coverage 含 score/size；next_path 与 reason=deferred 是下一跳，请用 --path 点名。未扫描不等于没有该字段。")
 	} else {
 		for i := range candidates {
 			scanIdx = append(scanIdx, i)
 		}
 	}
-	// One selected workbook keeps the remaining request; named multi-file shares slices.
+	if coverageHasDeferred(coverage) {
+		if explicitBatch || req.Cursor != "" {
+			result.Unknowns = append(result.Unknowns, "本批只内容扫描指定数量的工作簿。未进入本批的文件仍是 deferred，不能当成全目录已扫描。续扫用 next_command，不会重复已完成文件。未扫描不等于没有该字段。")
+		} else if len(scanIdx) <= 1 {
+			result.Unknowns = append(result.Unknowns, "本次只内容扫描一簿。workbook_coverage 含 score/size；next_path 与 reason=deferred 是下一跳，请用 --path 点名。未扫描不等于没有该字段。")
+		}
+	}
+	anchors := []Anchor{}
+	matches := 0
+	budget := !complete
+	readFailed := false
+	exact := req.Match == "exact"
+	notedSheets := false
+	// One selected workbook keeps the remaining request; a batch or named multi-file shares slices.
 	slice := req.Timeout
 	if len(scanIdx) > 1 {
 		slice = req.Timeout / time.Duration(min(len(scanIdx), 4))
@@ -361,21 +445,23 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 		report.Status = "partial"
 		report.Reason = ""
 		one, cancel := context.WithTimeout(ctx, slice)
+		scanCtx, _ := withSheetReports(withSheetFilter(one, req.Sheets))
 		result.Metrics.XLSXFilesScanned++
-		e := scan(one, c.physical, patterns, func(sheet, cell, source, text string) error {
+		e := scan(scanCtx, c.physical, patterns, func(sheet, cell, source, text string) error {
 			groups := []string{}
+			matched := []string{}
 			score := 0
 			for _, g := range []struct {
 				name     string
 				patterns []string
 			}{{"symbols", req.Symbols}, {"terms", req.Terms}} {
-				for _, p := range g.patterns {
-					if strings.Contains(text, p) {
-						groups = append(groups, g.name)
-						score = max(score, matchSpecificity(text, g.patterns))
-						break
-					}
+				hits := termHits(text, g.patterns, exact)
+				if len(hits) == 0 {
+					continue
 				}
+				groups = append(groups, g.name)
+				matched = append(matched, hits...)
+				score = max(score, matchSpecificity(text, hits))
 			}
 			if len(groups) == 0 {
 				return nil
@@ -388,13 +474,22 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 				ms := time.Since(started).Milliseconds()
 				result.Metrics.FirstAnchorMS = &ms
 			}
-			anchors = append(anchors, Anchor{Kind: "config", Path: c.relative, Text: shortText(text), Groups: groups, Workbook: &WorkbookLocation{Sheet: sheet, Cell: cell, Source: source}, specificity: score})
+			anchors = append(anchors, Anchor{Kind: "config", Path: c.relative, Text: shortText(text), Groups: groups, MatchedTerms: matched, Workbook: &WorkbookLocation{Sheet: sheet, Cell: cell, Source: source}, specificity: score})
 			return nil
 		})
+		if e == nil || errors.Is(e, errWorkbookBudget) {
+			if sheets := sheetReportsFrom(scanCtx); len(sheets) > 0 {
+				report.Sheets = sheets
+			}
+		}
 		cancel()
 		switch {
 		case e == nil:
 			report.Status = "complete"
+			if !notedSheets && sheetsSkipped(report.Sheets) {
+				notedSheets = true
+				result.Unknowns = append(result.Unknowns, "未列入 --sheet 的工作表没有内容扫描。")
+			}
 		case errors.Is(e, errMatchBudget):
 			budget = true
 			report.Reason = "match_limit"
@@ -410,13 +505,76 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 		case errors.Is(e, errWorkbookBudget):
 			budget = true
 			report.Reason = "file_size_or_xml_limit"
+			if lim, ok := asLimit(e); ok {
+				report.Reason = lim.Kind
+				report.LimitKind = lim.Kind
+				report.LimitBytes = lim.Limit
+				report.ActualBytes = lim.Actual
+				report.BudgetBytes = lim.Budget
+				report.Entry = lim.Entry
+				report.Sheet = lim.Sheet
+				if len(lim.Sheets) > 0 {
+					report.Sheets = lim.Sheets
+				}
+				if lim.Kind == "sheet_limit" {
+					report.Reason = "sheet_limit"
+					copyFirstSheetLimit(report)
+				}
+			}
 		default:
-			return Result{}, fmt.Errorf("读取 XLSX %s: %w", c.relative, e)
+			if lim, ok := asLimit(e); ok && lim.Kind == "sheet_not_found" {
+				report.Status = "partial"
+				report.Reason = "sheet_not_found"
+				report.Sheets = lim.Sheets
+				result.Unknowns = append(result.Unknowns, "请求的工作表没有全部找到，见 sheets。未找到不是「表里没有该字段」。")
+				continue
+			}
+			if len(scanIdx) == 1 {
+				return Result{}, fmt.Errorf("读取 XLSX %s: %w", c.relative, e)
+			}
+			report.Status = "partial"
+			report.Reason = "read_error"
+			report.Detail = shortErr(e)
+			readFailed = true
 		}
 		if errors.Is(e, errMatchBudget) {
 			break
 		}
 	}
+	if len(scanIdx) > 0 {
+		last := scanIdx[len(scanIdx)-1]
+		for i := last + 1; i < len(candidates); i++ {
+			if coverage.Files[i].Status != "complete" {
+				coverage.NextPath = candidates[i].relative
+				break
+			}
+		}
+	}
+	donePaths := []string{}
+	incomplete := false
+	for _, f := range coverage.Files {
+		if f.Status == "complete" {
+			donePaths = append(donePaths, f.Path)
+		} else {
+			incomplete = true
+		}
+	}
+	if incomplete && len(donePaths) > 0 {
+		batch := req.MaxFiles
+		if batch == 0 {
+			batch = 1
+		}
+		if namedSingle && !explicitBatch && req.Cursor == "" && coverage.NextPath != "" {
+			coverage.NextCommand = xlsxFollowCommand(req, "path", "", 0, coverage.NextPath)
+		} else if req.dirScope || explicitBatch || req.Cursor != "" {
+			coverage.ResumeCursor = encodeResumeCursor(donePaths)
+			coverage.NextCommand = xlsxFollowCommand(req, "cursor", coverage.ResumeCursor, batch, "")
+		}
+	}
+	if coverage.NextCommand == "" && coverage.NextPath != "" && incomplete {
+		coverage.NextCommand = xlsxFollowCommand(req, "path", "", 0, coverage.NextPath)
+	}
+	coverage.ContentComplete = complete && !incomplete && !budget && !readFailed
 	sort.SliceStable(anchors, func(i, j int) bool {
 		a, b := anchors[i], anchors[j]
 		if groupPriority(a.Groups) != groupPriority(b.Groups) {
@@ -425,22 +583,178 @@ func findWorkbooksWithScanner(ctx context.Context, req normalizedRequest, result
 		return a.specificity > b.specificity
 	})
 	result.Metrics.RawMatches = matches
-	result.Metrics.Truncated = budget || len(anchors) > req.MaxAnchors
+	result.Metrics.Truncated = budget || readFailed || len(anchors) > req.MaxAnchors
 	anchors = projectWorkbookAnchors(anchors, req.MaxAnchors)
 	result.Anchors = anchors
 	result.Metrics.ProjectedAnchor = len(anchors)
 	result.Metrics.ElapsedMS = time.Since(started).Milliseconds()
+	if readFailed && len(anchors) == 0 && !budget {
+		budget = true
+	}
 	switch {
 	case budget:
 		result.Status = StatusBudgetExceeded
-		result.Unknowns = append(result.Unknowns, "XLSX 扫描不完整，请查看 workbook_coverage 中未完成文件及原因；先用 --path 点名或 !排除单个工作簿，不要先把 timeout 加到 10s 以上。")
+		result.Unknowns = append(result.Unknowns, "XLSX 扫描不完整，请查看 workbook_coverage 中未完成文件及原因；先用 --path 点名或 !排除单个工作簿，不要先把 timeout 加到 10s 以上。不能当成全目录已扫描。")
 	case len(anchors) == 0:
 		result.Status = StatusNoCandidates
 		result.Unknowns = append(result.Unknowns, "零字面命中只表示 unknown，不能写成表里没有该字段；近义写法、别名或未扫描文件仍可能存在。")
 	default:
 		result.Status = StatusCandidatesFound
 	}
+	if readFailed {
+		result.Unknowns = append(result.Unknowns, "有工作簿读取失败，见 reason=read_error；失败文件没有挡住其它文件。")
+	}
 	return result, nil
+}
+
+func coverageHasDeferred(coverage *WorkbookCoverage) bool {
+	for _, f := range coverage.Files {
+		if f.Reason == reasonDeferred {
+			return true
+		}
+	}
+	return false
+}
+
+func sheetsSkipped(sheets []SheetScan) bool {
+	for _, sheet := range sheets {
+		if sheet.Reason == "not_requested" {
+			return true
+		}
+	}
+	return false
+}
+
+func copyFirstSheetLimit(report *WorkbookScan) {
+	for _, sheet := range report.Sheets {
+		if sheet.LimitKind == "" {
+			continue
+		}
+		report.LimitKind = sheet.LimitKind
+		report.LimitBytes = sheet.LimitBytes
+		report.ActualBytes = sheet.ActualBytes
+		report.BudgetBytes = sheet.BudgetBytes
+		report.Entry = sheet.Entry
+		report.Sheet = sheet.Name
+		return
+	}
+}
+
+func termHits(text string, patterns []string, exact bool) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, p := range patterns {
+		if p == "" || seen[p] {
+			continue
+		}
+		ok := strings.Contains(text, p)
+		if exact {
+			ok = text == p
+		}
+		if ok {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func shortErr(err error) string {
+	s := err.Error()
+	r := []rune(s)
+	if len(r) > 180 {
+		return string(r[:180])
+	}
+	return s
+}
+
+func encodeResumeCursor(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return "cf1." + base64.RawURLEncoding.EncodeToString([]byte(strings.Join(paths, "\n")))
+}
+
+func decodeResumeCursor(s string) ([]string, error) {
+	if !strings.HasPrefix(s, "cf1.") {
+		return nil, errors.New("无法识别的续扫 cursor")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(s, "cf1."))
+	if err != nil {
+		return nil, errors.New("无法识别的续扫 cursor")
+	}
+	out := []string{}
+	for _, p := range strings.Split(string(raw), "\n") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, "/") || strings.Contains(p, "\\") {
+			return nil, errors.New("cursor 含非法路径")
+		}
+		for _, seg := range strings.Split(p, "/") {
+			if seg == "" || seg == "." || seg == ".." {
+				return nil, errors.New("cursor 含非法路径")
+			}
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("续扫 cursor 为空")
+	}
+	return out, nil
+}
+
+func xlsxFollowCommand(req normalizedRequest, mode, cursor string, maxFiles int, nextPath string) string {
+	args := []string{"codefind", "--root", req.root, "--format", "xlsx"}
+	for _, term := range req.Terms {
+		args = append(args, "--term", term)
+	}
+	for _, symbol := range req.Symbols {
+		args = append(args, "--symbol", symbol)
+	}
+	if mode == "path" {
+		args = append(args, "--path", nextPath)
+	} else {
+		for _, p := range req.Paths {
+			if p == "." && len(req.Paths) == 1 {
+				continue
+			}
+			args = append(args, "--path", p)
+		}
+		if maxFiles <= 0 {
+			maxFiles = 1
+		}
+		args = append(args, "--max-files", strconv.Itoa(maxFiles), "--cursor", cursor)
+	}
+	if req.Match == "exact" {
+		args = append(args, "--match", "exact")
+	}
+	for _, sheet := range req.Sheets {
+		args = append(args, "--sheet", sheet)
+	}
+	args = append(args, "--max-anchors", strconv.Itoa(req.MaxAnchors), "--max-matches", strconv.Itoa(req.MaxMatches), "--timeout", req.Timeout.String())
+	return joinCommand(args)
+}
+
+func joinCommand(args []string) string {
+	quoted := make([]string, len(args))
+	for i, arg := range args {
+		quoted[i] = quoteCommandArg(arg)
+	}
+	return strings.Join(quoted, " ")
+}
+
+func quoteCommandArg(s string) string {
+	if s == "" {
+		return "''"
+	}
+	for _, r := range s {
+		if r <= ' ' || strings.ContainsRune("`\"'\\&|;<>()*?[]{}!#~", r) {
+			return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+		}
+	}
+	return s
 }
 
 var errMatchBudget = errors.New("match budget exceeded")
