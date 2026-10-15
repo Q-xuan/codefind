@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+Not a release. `Version` stays `0.2.0-rc.2`.
+
+### Added
+
+- Explicit xlsx batching with `--max-files` and resume via `--cursor`. Coverage keeps scanned, deferred, and partial files apart, returns `next_command`, and does not treat a stopped batch as a full-directory scan. The default directory search still content-scans one workbook.
+- Precise workbook limit diagnostics (`file_size`, `xml_part`, `xml_total`) with threshold, actual size, and entry or sheet. A sheet over the XML budget no longer drops anchors from sheets that were read. `--sheet` scans only named sheets. The 32 MiB / 64 MiB ceilings are unchanged.
+- `read --range` reports requested and returned cell counts, the last cell, separate cell and character truncation, and a non-overlapping `resume_cursor` / `next_ranges`. Help states the ceilings for max-anchors (50), max-cells (4096), and max-chars (200000).
+- Optional `--match exact` for whole-cell equality. The default remains substring. Anchors include `matched_terms`. No synonyms.
+- Shared-formula followers keep the stored expression and add the anchor cell plus its original expression. `resolved_expression` is a mechanical relative-reference shift, never a recalculation; unsupported formulas stay `unknown`.
+
 ## [0.2.0-rc.2] - 2026-09-29
 
 Public prerelease. Binary `Version` is `0.2.0-rc.2`; the tag is `v0.2.0-rc.2`. This is not stable 0.2.0.

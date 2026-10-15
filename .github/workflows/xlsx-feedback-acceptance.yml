@@ -1,0 +1,44 @@
+name: XLSX feedback acceptance check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    name: XLSX feedback acceptance check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Run XLSX feedback acceptance tests
+        run: |
+          set -euo pipefail
+          tests=(
+            TestXLSXBatchAndResumeDoesNotRepeatOrClaimFullScan
+            TestXLSXReadErrorDoesNotBlockBatch
+            TestXLSXSheetLimitKeepsReadableSheet
+            TestXLSXFileSizeLimitIsPrecise
+            TestXLSXSheetFilterSkipsOthers
+            TestReadRangeContinuationCoversWithoutOverlap
+            TestXLSXExactMatchIsWholeCell
+            TestReadSharedFormulaProjection
+            TestShiftFormulaMechanicalRefs
+            TestShiftFormulaRejectsUnsupported
+          )
+          pattern="$(IFS='|'; echo "${tests[*]}")"
+          go test -count=1 -v -run "^(${pattern})$" ./internal/find | tee "${RUNNER_TEMP:-/tmp}/xlsx-acceptance.txt"
+          for name in "${tests[@]}"; do
+            grep -q -- "--- PASS: ${name} " "${RUNNER_TEMP:-/tmp}/xlsx-acceptance.txt"
+          done

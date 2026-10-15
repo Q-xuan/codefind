@@ -24,8 +24,9 @@ func runRead(args []string, stdout, stderr io.Writer) int {
 	f.StringVar(&req.Anchor, "anchor", "", "命中格，例如 D20；与 range 二选一")
 	f.StringVar(&req.Strategy, "strategy", "", "adaptive（默认）、structure、row_headers、window")
 	f.Var(&fields, "field", "按表头名猜列，可重复；邻近同名列可能选错，范围已知时用 --range")
-	f.IntVar(&req.MaxCells, "max-cells", 96, "最多返回格子，上限 4096")
-	f.IntVar(&req.MaxChars, "max-chars", 24000, "原始文本字符预算，上限 200000")
+	f.IntVar(&req.MaxCells, "max-cells", 96, "最多返回格子，允许 1..4096")
+	f.IntVar(&req.MaxChars, "max-chars", 24000, "原始文本字符预算，允许 1..200000")
+	f.StringVar(&req.Cursor, "cursor", "", "范围续读游标，从上次未返回的格子继续，不重复已返回格子")
 	f.DurationVar(&req.Timeout, "timeout", 2*time.Second, "总读取超时，上限 10s")
 	if e := f.Parse(args); e != nil {
 		if errors.Is(e, flag.ErrHelp) {

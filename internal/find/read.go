@@ -22,6 +22,7 @@ type ReadRequest struct {
 	MaxCells int           `json:"max_cells"`
 	MaxChars int           `json:"max_chars"`
 	Timeout  time.Duration `json:"-"`
+	Cursor   string        `json:"cursor,omitempty"`
 }
 type ReadCell struct {
 	Cell          string           `json:"cell"`
@@ -48,13 +49,22 @@ type ReadResult struct {
 	ExternalWrites  int          `json:"external_writes"`
 }
 type ReadCoverage struct {
-	Ranges        []string `json:"ranges"`
-	ParseComplete bool     `json:"parse_complete"`
-	Truncated     bool     `json:"truncated"`
-	CellsScanned  int      `json:"cells_scanned"`
-	CellsSelected int      `json:"cells_selected"`
-	ElapsedMS     int64    `json:"elapsed_ms"`
-	TimeoutMS     int64    `json:"timeout_ms"`
+	Ranges         []string `json:"ranges"`
+	ParseComplete  bool     `json:"parse_complete"`
+	Truncated      bool     `json:"truncated"`
+	CellsScanned   int      `json:"cells_scanned"`
+	CellsSelected  int      `json:"cells_selected"`
+	ElapsedMS      int64    `json:"elapsed_ms"`
+	TimeoutMS      int64    `json:"timeout_ms"`
+	RequestedCells int      `json:"requested_cells"`
+	ReturnedCells  int      `json:"returned_cells"`
+	CellTruncated  bool     `json:"cell_truncated"`
+	CharTruncated  bool     `json:"char_truncated"`
+	LastCell       string   `json:"last_cell,omitempty"`
+	NextRange      string   `json:"next_range,omitempty"`
+	NextRanges     []string `json:"next_ranges,omitempty"`
+	ResumeCursor   string   `json:"resume_cursor,omitempty"`
+	NextCommand    string   `json:"next_command,omitempty"`
 }
 type rect struct{ r1, c1, r2, c2 int }
 
@@ -157,7 +167,21 @@ func validateRead(req ReadRequest) (ReadRequest, string, []rect, error) {
 		if (b.r2-b.r1+1)*(b.c2-b.c1+1) > 4096 {
 			return invalid(errors.New("range 最多 4096 个格子"))
 		}
+		if req.Cursor != "" {
+			cell, cerr := decodeReadCursor(req.Cursor)
+			if cerr != nil {
+				return invalid(cerr)
+			}
+			cr, cc, cerr := cellPosition(cell)
+			if cerr != nil || !b.contains(cr, cc) {
+				return invalid(errors.New("read cursor 必须落在 range 内"))
+			}
+			req.Cursor = "cfread1:" + cell
+		}
 		return req, physical, []rect{b}, nil
+	}
+	if req.Cursor != "" {
+		return invalid(errors.New("read cursor 只用于 --range"))
 	}
 	if req.Strategy == "" {
 		req.Strategy = "adaptive"
@@ -218,6 +242,16 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 	}
 	cells := map[string]ReadCell{}
 	merges := []rect{}
+	masters := map[string]sharedMaster{}
+	noteMaster := func(c xlsxCell) {
+		if c.Formula == nil || c.Formula.Type != "shared" || strings.TrimSpace(c.Formula.Expression) == "" {
+			return
+		}
+		if _, ok := masters[c.Formula.SharedIndex]; ok {
+			return
+		}
+		masters[c.Formula.SharedIndex] = sharedMaster{cell: c.Ref, expr: c.Formula.Expression}
+	}
 	tick := func() error {
 		out.Coverage.CellsScanned++
 		if out.Coverage.CellsScanned > 100000 {
@@ -226,6 +260,10 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 		return ctx.Err()
 	}
 	e = walkWorkbook(ctx, file, nil, workbookVisitor{sheet: req.Sheet,
+		shared: func(_ string, c xlsxCell) error {
+			noteMaster(c)
+			return nil
+		},
 		wantRow: func(r int) bool {
 			for _, b := range boxes {
 				if r >= b.r1 && r <= b.r2 {
@@ -240,6 +278,7 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 				return e
 			}
 			if selectedRange(c.Ref) {
+				noteMaster(c)
 				v := ReadCell{Cell: c.Ref, Type: c.Type, Value: c.Value, Formula: c.Formula}
 				if c.Formula != nil {
 					v.CachedValue = c.Value
@@ -284,7 +323,19 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 	} else {
 		out.Coverage.ParseComplete = true
 	}
+	mechanical, unresolved := projectSharedFormulas(cells, masters)
+	if mechanical {
+		out.Unknowns = append(out.Unknowns, "resolved_expression 只按相对引用做机械展开，没有重新计算；cached_value 不能证明公式已重算。")
+	}
+	if unresolved {
+		out.Unknowns = append(out.Unknowns, "无法机械展开的共享公式已保留原文，resolve_status=unknown，没有静默推算。")
+	}
 	refs, fields, strategy, reason := selectReadCellsContext(ctx, req, cells, merges, boxes)
+	if req.Cursor != "" {
+		cell, _ := decodeReadCursor(req.Cursor)
+		sr, sc, _ := cellPosition(cell)
+		refs = refsFrom(refs, sr, sc)
+	}
 	if ctx.Err() != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return ReadResult{}, ctx.Err()
@@ -295,6 +346,7 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 	out.FallbackReason = reason
 	out.FieldCandidates = fields
 	out.Coverage.CellsSelected = len(refs)
+	out.Coverage.RequestedCells = len(refs)
 	if len(fields) > 1 {
 		out.Unknowns = append(out.Unknowns, "存在多个候选字段列；保留全部候选，不自动判断值区、备注区或业务关联。")
 	}
@@ -302,13 +354,21 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 		out.Unknowns = append(out.Unknowns, "策略使用有限坐标范围；未找到说明时应由调用方继续扩大范围或跨表查询。")
 	}
 	remaining := req.MaxChars
+	stopForCells := false
 	for _, ref := range refs {
 		if ctx.Err() != nil {
 			out.Coverage.Truncated = true
 			break
 		}
-		if len(out.Cells) >= req.MaxCells || remaining <= 0 {
+		if len(out.Cells) >= req.MaxCells {
 			out.Coverage.Truncated = true
+			out.Coverage.CellTruncated = true
+			stopForCells = true
+			break
+		}
+		if remaining <= 0 {
+			out.Coverage.Truncated = true
+			out.Coverage.CharTruncated = true
 			break
 		}
 		v := cells[ref]
@@ -321,6 +381,7 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 				s = s[:remaining]
 				v.TextTruncated = true
 				out.Coverage.Truncated = true
+				out.Coverage.CharTruncated = true
 			}
 			remaining -= len(s)
 			t := string(s)
@@ -335,10 +396,50 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 			f.Type = *clip(&f.Type)
 			f.SharedIndex = *clip(&f.SharedIndex)
 			f.Range = *clip(&f.Range)
+			if f.SharedAnchor != "" {
+				f.SharedAnchor = *clip(&f.SharedAnchor)
+			}
+			if f.AnchorExpression != "" {
+				f.AnchorExpression = *clip(&f.AnchorExpression)
+			}
+			if f.ResolvedExpression != "" {
+				f.ResolvedExpression = *clip(&f.ResolvedExpression)
+			}
 			v.Formula = &f
 		}
 		v.Type = *clip(&v.Type)
 		out.Cells = append(out.Cells, v)
+	}
+	out.Coverage.ReturnedCells = len(out.Cells)
+	if len(out.Cells) > 0 {
+		out.Coverage.LastCell = out.Cells[len(out.Cells)-1].Cell
+	}
+	if req.Strategy == "range" && len(out.Cells) < len(refs) {
+		nextRanges := []string{}
+		if len(out.Cells) == 0 {
+			nextRanges = []string{boxes[0].label()}
+		} else {
+			nextRanges = remainderRanges(boxes[0], out.Coverage.LastCell)
+		}
+		if len(nextRanges) > 0 {
+			out.Coverage.NextRanges = nextRanges
+			out.Coverage.NextRange = nextRanges[0]
+			nextCell := ""
+			if len(out.Cells) == 0 {
+				nextCell = cellAddress(boxes[0].r1, boxes[0].c1)
+			} else if len(out.Cells) < len(refs) {
+				nextCell = refs[len(out.Cells)]
+			}
+			if stopForCells || out.Coverage.CharTruncated || out.Coverage.CellTruncated {
+				if nextCell == "" && len(nextRanges) > 0 {
+					nextCell = strings.Split(nextRanges[0], ":")[0]
+				}
+			}
+			if nextCell != "" {
+				out.Coverage.ResumeCursor = "cfread1:" + nextCell
+				out.Coverage.NextCommand = readFollowCommand(req, out.Coverage.ResumeCursor)
+			}
+		}
 	}
 	for _, b := range merges {
 		if ctx.Err() != nil {
@@ -359,8 +460,77 @@ func ReadWorkbook(ctx context.Context, request ReadRequest) (ReadResult, error) 
 		out.Status = StatusBudgetExceeded
 		out.Unknowns = append(out.Unknowns, "输出或读取不完整，请查看 coverage 和 text_truncated；不要把缺失解释为不存在。")
 	}
+	if out.Coverage.CellTruncated {
+		out.Unknowns = append(out.Unknowns, "格子数量达到 max-cells。cell_truncated 与 char_truncated 分开；续读用 resume_cursor 或 next_ranges，不重复已返回的格子。")
+	}
+	if out.Coverage.CharTruncated {
+		out.Unknowns = append(out.Unknowns, "字符预算达到 max-chars。被截断的格子带 text_truncated，这和格子数量截断是两件事。")
+	}
 	out.Coverage.ElapsedMS = time.Since(started).Milliseconds()
 	return out, nil
+}
+
+func decodeReadCursor(s string) (string, error) {
+	const prefix = "cfread1:"
+	if !strings.HasPrefix(s, prefix) {
+		return "", errors.New("无法识别的 read cursor")
+	}
+	cell := strings.TrimPrefix(s, prefix)
+	if !validCell(cell) {
+		return "", errors.New("read cursor 单元格无效")
+	}
+	return cell, nil
+}
+
+func refsFrom(refs []string, row, col int) []string {
+	out := []string{}
+	for _, ref := range refs {
+		r, c, err := cellPosition(ref)
+		if err != nil {
+			continue
+		}
+		if r > row || (r == row && c >= col) {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+func remainderRanges(b rect, last string) []string {
+	r, c, err := cellPosition(last)
+	if err != nil {
+		return []string{b.label()}
+	}
+	c++
+	if c > b.c2 {
+		c = b.c1
+		r++
+	}
+	if r > b.r2 {
+		return nil
+	}
+	out := []string{}
+	if c != b.c1 {
+		out = append(out, (rect{r, c, r, b.c2}).label())
+		r++
+		c = b.c1
+	}
+	if r <= b.r2 {
+		out = append(out, (rect{r, c, b.r2, b.c2}).label())
+	}
+	return out
+}
+
+func readFollowCommand(req ReadRequest, cursor string) string {
+	root := req.Root
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	args := []string{"codefind", "read", "--root", root, "--file", req.File, "--sheet", req.Sheet, "--range", req.Range, "--max-cells", strconv.Itoa(req.MaxCells), "--max-chars", strconv.Itoa(req.MaxChars), "--cursor", cursor}
+	if req.Timeout > 0 {
+		args = append(args, "--timeout", req.Timeout.String())
+	}
+	return joinCommand(args)
 }
 
 func selectReadCells(req ReadRequest, cells map[string]ReadCell, merges []rect, boxes []rect) ([]string, []string, string, string) {

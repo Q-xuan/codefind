@@ -56,7 +56,7 @@ func TestHelpExplainsPathRangeAndUnknown(t *testing.T) {
 	if code != 0 {
 		t.Fatal(code)
 	}
-	for _, want := range []string{"--format xlsx", "gb18030", "单个文件", "!前缀", "--range", "unknown", "10s", "next_path"} {
+	for _, want := range []string{"--format xlsx", "gb18030", "单个文件", "!前缀", "--range", "unknown", "10s", "next_path", "--max-files", "--cursor", "1..50", "1..4096", "1..200000"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help missing %q in %s", want, text)
 		}
@@ -73,7 +73,7 @@ func TestHelpXLSXExplainsFieldVsRange(t *testing.T) {
 	if code != 0 {
 		t.Fatal(code)
 	}
-	for _, want := range []string{"--range", "--field", "更稳", "unknown", "表里没有", "10s", "deferred"} {
+	for _, want := range []string{"--range", "--field", "更稳", "unknown", "表里没有", "10s", "deferred", "exact", "resolved_expression", "1..4096"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("help-xlsx missing %q in %s", want, text)
 		}

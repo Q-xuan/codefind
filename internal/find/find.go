@@ -54,6 +54,10 @@ type Request struct {
 	MaxAnchors int           `json:"max_anchors"`
 	MaxMatches int           `json:"max_matches"`
 	Timeout    time.Duration `json:"timeout"`
+	MaxFiles   int           `json:"max_files,omitempty"`
+	Cursor     string        `json:"cursor,omitempty"`
+	Match      string        `json:"match,omitempty"`
+	Sheets     []string      `json:"sheets,omitempty"`
 }
 
 type Query struct {
@@ -64,19 +68,24 @@ type Query struct {
 	Terms           []string `json:"terms"`
 	Symbols         []string `json:"symbols"`
 	Paths           []string `json:"paths"`
+	MaxFiles        int      `json:"max_files,omitempty"`
+	Cursor          string   `json:"cursor,omitempty"`
+	Match           string   `json:"match,omitempty"`
+	Sheets          []string `json:"sheets,omitempty"`
 }
 
 type Anchor struct {
-	Kind        string            `json:"kind"`
-	Path        string            `json:"path"`
-	Line        int               `json:"line,omitempty"`
-	Workbook    *WorkbookLocation `json:"workbook,omitempty"`
-	Text        string            `json:"text"`
-	Groups      []string          `json:"groups"`
-	Syntax      *SyntaxEvidence   `json:"syntax,omitempty"`
-	pathRank    int
-	specificity int
-	paired      bool
+	Kind         string            `json:"kind"`
+	Path         string            `json:"path"`
+	Line         int               `json:"line,omitempty"`
+	Workbook     *WorkbookLocation `json:"workbook,omitempty"`
+	Text         string            `json:"text"`
+	Groups       []string          `json:"groups"`
+	MatchedTerms []string          `json:"matched_terms,omitempty"`
+	Syntax       *SyntaxEvidence   `json:"syntax,omitempty"`
+	pathRank     int
+	specificity  int
+	paired       bool
 }
 
 type Metrics struct {
@@ -151,6 +160,10 @@ func Find(ctx context.Context, request Request) (Result, error) {
 			Terms:           normalized.Terms,
 			Symbols:         normalized.Symbols,
 			Paths:           normalized.Paths,
+			MaxFiles:        normalized.MaxFiles,
+			Cursor:          normalized.Cursor,
+			Match:           normalized.Match,
+			Sheets:          normalized.Sheets,
 		},
 		Anchors:  []Anchor{},
 		Unknowns: []string{},
@@ -394,6 +407,28 @@ func normalizeRequest(request Request) (normalizedRequest, error) {
 	}
 	if request.Timeout < time.Millisecond || request.Timeout > maxAllowedTimeout {
 		return normalizedRequest{}, fmt.Errorf("timeout 必须在 1ms..%s", maxAllowedTimeout)
+	}
+	request.Match = strings.ToLower(strings.TrimSpace(request.Match))
+	if request.Match == "" {
+		request.Match = "substring"
+	}
+	if request.Match != "substring" && request.Match != "exact" {
+		return normalizedRequest{}, errors.New("match 必须为 substring 或 exact")
+	}
+	request.Sheets = cleanList(request.Sheets)
+	if request.MaxFiles < 0 || request.MaxFiles > maxWorkbooks {
+		return normalizedRequest{}, fmt.Errorf("max-files 必须在 1..%d", maxWorkbooks)
+	}
+	if request.Cursor != "" {
+		if _, err := decodeResumeCursor(request.Cursor); err != nil {
+			return normalizedRequest{}, err
+		}
+	}
+	if request.Format != "xlsx" {
+		if request.Match == "exact" || request.MaxFiles != 0 || request.Cursor != "" || len(request.Sheets) > 0 {
+			return normalizedRequest{}, errors.New("exact、max-files、cursor 和 sheet 只用于 --format xlsx")
+		}
+		request.Match = ""
 	}
 	return normalizedRequest{Request: request, root: root, includes: includes, excludes: excludes, dirScope: dirScope}, nil
 }
